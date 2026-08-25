@@ -2,10 +2,11 @@
 OAuth, read-only mail scope. Tokens never touch the DB or a config file —
 only a keychain reference is stored (see app/email_auth/oauth.py)."""
 
-import json
 import uuid
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException
+from msal import SerializableTokenCache
 from sqlalchemy import select
 from starlette.requests import Request
 from starlette.responses import RedirectResponse
@@ -13,7 +14,7 @@ from starlette.responses import RedirectResponse
 from app.auth.dependencies import require_auth
 from app.config import Settings
 from app.dependencies import get_settings, get_storage
-from app.email_auth.oauth import build_google_flow, build_msal_app, delete_token, store_token
+from app.email_auth.oauth import build_google_flow, build_msal_app, delete_token, store_google_credentials, store_ms_cache
 from app.models.db import EmailAccount, User
 from app.models.schemas import EmailAccountOut
 from app.storage.base import BaseStorageBackend
@@ -54,15 +55,20 @@ def callback_google(
     creds = flow.credentials
 
     account_id = str(uuid.uuid4())
-    store_token(
-        account_id,
-        json.dumps({"access_token": creds.token, "refresh_token": creds.refresh_token}),
+    store_google_credentials(account_id, creds)
+
+    profile_resp = httpx.get(
+        "https://www.googleapis.com/oauth2/v2/userinfo",
+        headers={"Authorization": f"Bearer {creds.token}"},
+        timeout=10.0,
     )
+    email_address = profile_resp.json().get("email", "(unknown)") if profile_resp.is_success else "(unknown)"
+
     with storage.session() as session:
         account = EmailAccount(
             id=account_id,
             provider="gmail",
-            email_address="(pending profile fetch)",
+            email_address=email_address,
             keychain_ref=f"recruit-assistant-email:{account_id}",
         )
         session.add(account)
@@ -90,19 +96,31 @@ def callback_microsoft(
 ):
     from app.email_auth.oauth import MS_SCOPES
 
-    app_client = build_msal_app(settings.ms_oauth_client_id, settings.ms_oauth_client_secret, settings.ms_oauth_tenant_id)
+    cache = SerializableTokenCache()
+    app_client = build_msal_app(
+        settings.ms_oauth_client_id, settings.ms_oauth_client_secret, settings.ms_oauth_tenant_id, token_cache=cache
+    )
     redirect_uri = f"{settings.oauth_redirect_base_url}/api/v1/email-accounts/callback/microsoft"
     result = app_client.acquire_token_by_authorization_code(code, scopes=MS_SCOPES, redirect_uri=redirect_uri)
     if "access_token" not in result:
         raise HTTPException(400, f"Microsoft OAuth failed: {result.get('error_description')}")
 
     account_id = str(uuid.uuid4())
-    store_token(account_id, json.dumps(result))
+    store_ms_cache(account_id, cache)
+
+    profile_resp = httpx.get(
+        "https://graph.microsoft.com/v1.0/me",
+        headers={"Authorization": f"Bearer {result['access_token']}"},
+        timeout=10.0,
+    )
+    profile = profile_resp.json() if profile_resp.is_success else {}
+    email_address = profile.get("mail") or profile.get("userPrincipalName") or "(unknown)"
+
     with storage.session() as session:
         account = EmailAccount(
             id=account_id,
             provider="outlook",
-            email_address="(pending profile fetch)",
+            email_address=email_address,
             keychain_ref=f"recruit-assistant-email:{account_id}",
         )
         session.add(account)

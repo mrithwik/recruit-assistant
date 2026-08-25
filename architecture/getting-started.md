@@ -51,28 +51,50 @@ before relying on it for real candidates.
 
 ## 5. Enable email scanning (Gmail / Outlook OAuth)
 
-Email scanning requires registering an OAuth app — this is a one-time setup per provider:
+Email scanning requires registering an OAuth app — this is a one-time setup per provider. For
+testing against your own real inbox rather than mock mode, the Google side has one easy-to-miss
+step (below) that blocks the whole flow if skipped.
 
 **Gmail:**
-1. Google Cloud Console → new project → enable the Gmail API
-2. OAuth consent screen → add the `gmail.readonly` scope
-3. Credentials → OAuth client ID (type: Web application) → redirect URI:
+1. [Google Cloud Console](https://console.cloud.google.com/) → new project → APIs & Services →
+   enable the **Gmail API**.
+2. OAuth consent screen → External (unless you have a Workspace org) → add scopes
+   `gmail.readonly` and `userinfo.email` (the second is what lets the app show the real
+   connected address instead of a placeholder — see project-log section 17).
+3. **Add yourself as a test user**, on the same consent-screen page. This step is easy to
+   miss and the failure mode is confusing: Google apps start in "Testing" publishing status,
+   and an unverified app in that status **rejects sign-in from any Google account not listed
+   as a test user** — including your own, if you skip this. There's no verification review
+   needed for personal/local use, just this allowlist entry.
+4. Credentials → OAuth client ID (type: Web application) → redirect URI:
    `http://localhost:8000/api/v1/email-accounts/callback/google`
-4. Put the client ID/secret in `.env` as `GOOGLE_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_SECRET`
+5. Put the client ID/secret in `.env` as `GOOGLE_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_SECRET`
 
 **Outlook:**
-1. Azure Portal → App registrations → new registration
-2. API permissions → Microsoft Graph → `Mail.Read` (delegated)
-3. Redirect URI: `http://localhost:8000/api/v1/email-accounts/callback/microsoft`
-4. Put the client ID/secret in `.env` as `MS_OAUTH_CLIENT_ID` / `MS_OAUTH_CLIENT_SECRET`
+1. [Azure Portal](https://portal.azure.com/) → App registrations → new registration.
+2. API permissions → Microsoft Graph → `Mail.Read` (delegated) → grant admin consent if
+   prompted (not required for a personal Microsoft account).
+3. Certificates & secrets → new client secret (this is `MS_OAUTH_CLIENT_SECRET`).
+4. Redirect URI (under Authentication, type "Web"):
+   `http://localhost:8000/api/v1/email-accounts/callback/microsoft`
+5. Put the client ID/secret in `.env` as `MS_OAUTH_CLIENT_ID` / `MS_OAUTH_CLIENT_SECRET`
 
-Restart the backend, then go to the Email Access tab and connect an account. Tokens are
-stored in your OS keychain, never in the app's database.
+Restart the backend, then go to the Email Access tab and connect an account — the connected
+list should show your real email address, not a placeholder. Tokens (plus what's needed to
+refresh them — Google access tokens expire in about an hour) are stored in your OS keychain,
+never in the app's database or a config file.
 
 ## Troubleshooting
 
 - **"No LLM provider configured"** — set `USE_MOCK=true`, or set an API key.
 - **"GOOGLE_OAUTH_CLIENT_ID not configured"** — expected until you complete step 5 above;
   folder scanning works independently of email setup.
+- **Google sign-in says the app is blocked / not verified, even for your own account** — you
+  weren't added as a test user on the OAuth consent screen (step 3 above). This is the most
+  common snag connecting a real Gmail account.
+- **A connected account still shows a placeholder instead of the real address, or a scan
+  starts failing partway through with auth errors** — reconnect the account; both are
+  symptoms of a token stored before the profile-fetch/refresh support existed (see
+  project-log section 17).
 - **Scan finds 0 resumes** — only `.pdf`, `.docx`, `.txt` are supported (`SUPPORTED_EXTENSIONS`
   in `scanning/folder_ingestor.py`).

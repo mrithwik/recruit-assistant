@@ -2,14 +2,13 @@
 run_scan(). Both are first-class: a recruiter with no local resumes yet can
 scan email alone, or a recruiter with only saved folders can skip email."""
 
-import json
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.config import Settings
 from app.dependencies import get_llm_client, get_settings, get_storage
-from app.email_auth.oauth import load_token
+from app.email_auth.oauth import get_valid_access_token
 from app.matching.llm_client import LLMClient
 from app.models.db import EmailAccount
 from app.models.schemas import ScanEmailRequest, ScanFolderRequest, ScanResult
@@ -78,11 +77,16 @@ async def scan_email_accounts(
                 if not account:
                     combined.errors.append(f"{account_id}: account not found")
                     continue
-                token_json = load_token(account_id)
-                if not token_json:
+                access_token = get_valid_access_token(
+                    account_id,
+                    account.provider,
+                    ms_client_id=settings.ms_oauth_client_id,
+                    ms_client_secret=settings.ms_oauth_client_secret,
+                    ms_tenant_id=settings.ms_oauth_tenant_id,
+                )
+                if not access_token:
                     combined.errors.append(f"{account_id}: no stored token, reconnect the account")
                     continue
-                access_token = json.loads(token_json).get("access_token", "")
                 if account.provider == "gmail":
                     ingestor = GmailIngestor(access_token, account.email_address)
                 else:

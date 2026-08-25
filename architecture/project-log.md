@@ -456,6 +456,48 @@ failed (`1 failed, 47 passed`), reverted, confirmed green again (48 passed). No 
 Actions run yet — that requires the user to push this repo to a GitHub remote, which wasn't
 done as part of this pass.
 
+## 17. Hardening plan, Stage 3 — real-Gmail testing readiness
+
+The OAuth connect flow (`email_auth/oauth.py`, `routes/email_accounts.py`) was structurally
+complete but had never actually been exercised against a real account — two gaps found during
+the earlier research pass, both fixed here:
+
+**Connected account showed a placeholder forever.** Both OAuth callbacks hardcoded
+`email_address="(pending profile fetch)"` and never followed up. Fixed: after token exchange,
+one profile call per provider (Google: `GET oauth2/v2/userinfo`; Microsoft: `GET
+graph.microsoft.com/v1.0/me`) using the just-issued access token, written into the
+`EmailAccount` row before commit. Needed adding the `userinfo.email` scope alongside
+`gmail.readonly` for the Google side.
+
+**No token refresh — a real scan would start failing with 401s after ~1 hour.** The stored
+token shape was a bare `{access_token, refresh_token}` dict with no way to actually refresh
+(refreshing needs the token endpoint + client id/secret too, and — the one that actually broke
+the first version of this fix, caught by its own test — the token's `expiry`, without which a
+reloaded `Credentials` object never looks expired and refresh() never fires). Replaced with
+`store_google_credentials`/`load_google_credentials` (full `Credentials` material, including
+expiry) and `store_ms_cache`/`load_ms_cache` (MSAL's own `SerializableTokenCache`, since MSAL
+handles refresh internally against it via `acquire_token_silent`). Added
+`get_valid_access_token()` as the one place `routes/scan.py` now asks for a token — refreshes
+first if needed, transparently to the caller.
+
+Documented the two setup gotchas that would otherwise block real-account testing entirely in
+`architecture/getting-started.md`: the `userinfo.email` scope, and — the one that actually
+looks like a bug the first time you hit it — Google rejects sign-in from *any* account,
+including your own, on an unverified OAuth app unless it's explicitly added as a "test user"
+on the consent screen.
+
+Verified: full backend suite (52 passed — 4 new tests for token refresh, 2 pre-existing golden
+skips). `test_oauth_token_refresh.py` fakes the OS keychain (never touches the real one) and
+stubs the SDK refresh calls (never hits the network): confirms an expired Google credential
+gets refreshed and re-persisted, a non-expired one is left alone, a missing account returns
+`None` cleanly, and the Outlook path correctly delegates to MSAL's `acquire_token_silent`. The
+first draft of the Google refresh fix had a real bug — `expiry` wasn't being persisted, so a
+reloaded credential never looked expired and refresh() silently never fired — caught by this
+test suite before it ever reached the real OAuth flow. No real Google Cloud / Azure AD test
+account was available in this environment, so the actual browser-based connect → callback →
+scan round trip against a live inbox is still unverified; that's on the user to try against
+their own account per the updated getting-started.md steps.
+
 ## Cross-references
 
 - [Design Decisions](design-decisions.md) — the ADRs behind each choice above
