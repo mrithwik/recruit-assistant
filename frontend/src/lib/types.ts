@@ -137,6 +137,15 @@ export interface EmailAccount {
   status: string;
 }
 
+export interface ScheduledSource {
+  id: string;
+  kind: "folder" | "email_account";
+  ref: string;
+  include_subfolders: boolean;
+  created_at: string;
+  last_run_at: string | null;
+}
+
 export interface ScanResult {
   resumes_found: number;
   candidates_created: number;

@@ -300,6 +300,21 @@ class EmailAccountOut(BaseModel):
     status: str
 
 
+class ScheduledSourceIn(BaseModel):
+    kind: str  # "folder" | "email_account"
+    ref: str  # folder path, or EmailAccount.id
+    include_subfolders: bool = True
+
+
+class ScheduledSourceOut(BaseModel):
+    id: str
+    kind: str
+    ref: str
+    include_subfolders: bool
+    created_at: datetime
+    last_run_at: datetime | None
+
+
 # --- Dashboard ---
 
 class DashboardKPIs(BaseModel):

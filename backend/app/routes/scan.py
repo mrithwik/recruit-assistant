@@ -33,6 +33,30 @@ def _resolve_mock_manifest_path(settings: Settings) -> str:
     return str(DEFAULT_MOCK_MANIFEST)
 
 
+def build_email_ingestor(
+    account_id: str, account: EmailAccount, settings: Settings, mock_fixtures: list
+) -> tuple[object | None, str | None]:
+    """Shared by the on-demand /email-accounts route and the opt-in
+    scheduler's nightly job — one place that decides mock vs. real, and
+    real-Gmail vs. real-Outlook, so the two callers can't drift. Returns
+    (ingestor, error_message); exactly one is non-None."""
+    if settings.use_mock:
+        return MockEmailIngestor(fixtures=mock_fixtures), None
+
+    access_token = get_valid_access_token(
+        account_id,
+        account.provider,
+        ms_client_id=settings.ms_oauth_client_id,
+        ms_client_secret=settings.ms_oauth_client_secret,
+        ms_tenant_id=settings.ms_oauth_tenant_id,
+    )
+    if not access_token:
+        return None, f"{account_id}: no stored token, reconnect the account"
+    if account.provider == "gmail":
+        return GmailIngestor(access_token, account.email_address), None
+    return OutlookIngestor(access_token, account.email_address), None
+
+
 @router.post("/folders", response_model=ScanResult)
 async def scan_folders(
     payload: ScanFolderRequest,
@@ -70,27 +94,14 @@ async def scan_email_accounts(
 
     with storage.session() as session:
         for account_id in payload.account_ids:
-            if settings.use_mock:
-                ingestor = MockEmailIngestor(fixtures=mock_fixtures)
-            else:
-                account = session.get(EmailAccount, account_id)
-                if not account:
-                    combined.errors.append(f"{account_id}: account not found")
-                    continue
-                access_token = get_valid_access_token(
-                    account_id,
-                    account.provider,
-                    ms_client_id=settings.ms_oauth_client_id,
-                    ms_client_secret=settings.ms_oauth_client_secret,
-                    ms_tenant_id=settings.ms_oauth_tenant_id,
-                )
-                if not access_token:
-                    combined.errors.append(f"{account_id}: no stored token, reconnect the account")
-                    continue
-                if account.provider == "gmail":
-                    ingestor = GmailIngestor(access_token, account.email_address)
-                else:
-                    ingestor = OutlookIngestor(access_token, account.email_address)
+            account = session.get(EmailAccount, account_id) if not settings.use_mock else None
+            if not settings.use_mock and not account:
+                combined.errors.append(f"{account_id}: account not found")
+                continue
+            ingestor, error = build_email_ingestor(account_id, account, settings, mock_fixtures)
+            if error:
+                combined.errors.append(error)
+                continue
 
             result = await run_scan(
                 ingestor=ingestor,

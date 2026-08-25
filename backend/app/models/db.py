@@ -8,7 +8,7 @@ ResumeSource rows (email and/or folder), merged via identity_resolution.py.
 
 from datetime import datetime
 
-from sqlalchemy import JSON, DateTime, Float, ForeignKey, String, Text
+from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -199,3 +199,19 @@ class EmailAccount(Base):
     connected_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
     last_scanned_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
     status: Mapped[str] = mapped_column(String, default="connected")
+
+
+class ScheduledSource(Base):
+    """A folder or connected mailbox the user opted into nightly auto-scanning
+    for — the opt-in scheduler (app/scheduler/) only ever touches sources
+    with a row here; everything else stays on-demand-only, which is the
+    point (off by default, per-source, not sprung on the user)."""
+
+    __tablename__ = "scheduled_sources"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    kind: Mapped[str] = mapped_column(String)  # "folder" | "email_account"
+    ref: Mapped[str] = mapped_column(String)  # folder path, or EmailAccount.id
+    include_subfolders: Mapped[bool] = mapped_column(Boolean, default=True)  # folder kind only
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+    last_run_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)

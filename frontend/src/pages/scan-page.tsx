@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { AlertTriangle, CheckCircle2, FolderPlus, Inbox, Mail, Plus, ScanSearch, X } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Clock, FolderPlus, Inbox, Mail, Plus, ScanSearch, X } from "lucide-react";
 import { DateRangePicker } from "../components/ui/date-range-picker";
 import { useScanStore } from "../stores/scan-store";
 import { useToastStore } from "../stores/toast-store";
@@ -42,9 +42,14 @@ export function ScanPage() {
     lastResult,
     scanning,
     lastGenerated,
+    scheduledSources,
+    fetchScheduledSources,
+    setSourceAutoScan,
   } = useScanStore();
   const push = useToastStore((s) => s.push);
   const [folderInput, setFolderInput] = useState("");
+  const isAutoScanned = (kind: "folder" | "email_account", ref: string) =>
+    scheduledSources.some((s) => s.kind === kind && s.ref === ref);
   // Best available proxy for scan volume: the last generated dataset's item
   // count (the overwhelmingly common case for mock-mode testing). Falls
   // back to a flat guess only when nothing's been generated yet — a flat
@@ -56,6 +61,7 @@ export function ScanPage() {
 
   useEffect(() => {
     fetchEmailAccounts().catch(() => {});
+    fetchScheduledSources().catch(() => {});
   }, []);
 
   function addFolder() {
@@ -97,6 +103,11 @@ export function ScanPage() {
               Choose one or both sources
             </h2>
           </div>
+          <p className="mb-2 flex items-center gap-1 text-xs text-zinc-400">
+            <Clock size={11} /> next to a source toggles nightly auto-scan for it — off by
+            default, and only takes effect if a server admin has also enabled the scheduler
+            (<code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">SCHEDULER_ENABLED=true</code>).
+          </p>
 
           <div className="space-y-3">
             <Card>
@@ -128,6 +139,13 @@ export function ScanPage() {
                       className="flex items-center gap-1.5 rounded-md bg-zinc-100 py-1 pl-2.5 pr-1.5 text-xs font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300"
                     >
                       {p}
+                      <button
+                        title={isAutoScanned("folder", p) ? "Auto-scan nightly: on" : "Auto-scan nightly: off"}
+                        className={`rounded p-0.5 hover:bg-zinc-200 dark:hover:bg-zinc-700 ${isAutoScanned("folder", p) ? "text-indigo-600 dark:text-indigo-400" : "text-zinc-400"}`}
+                        onClick={() => setSourceAutoScan("folder", p, !isAutoScanned("folder", p), includeSubfolders)}
+                      >
+                        <Clock size={12} />
+                      </button>
                       <button
                         className="rounded p-0.5 text-zinc-400 hover:bg-zinc-200 hover:text-red-600 dark:hover:bg-zinc-700"
                         onClick={() => setFolderPaths(folderPaths.filter((f) => f !== p))}
@@ -177,6 +195,13 @@ export function ScanPage() {
                       />
                       <span className="text-zinc-700 dark:text-zinc-200">{a.email_address}</span>
                       <span className="text-zinc-400">({a.provider})</span>
+                      <button
+                        title={isAutoScanned("email_account", a.id) ? "Auto-scan nightly: on" : "Auto-scan nightly: off"}
+                        className={`ml-auto rounded p-0.5 hover:bg-zinc-200 dark:hover:bg-zinc-700 ${isAutoScanned("email_account", a.id) ? "text-indigo-600 dark:text-indigo-400" : "text-zinc-400"}`}
+                        onClick={() => setSourceAutoScan("email_account", a.id, !isAutoScanned("email_account", a.id))}
+                      >
+                        <Clock size={13} />
+                      </button>
                     </li>
                   ))}
                 </ul>

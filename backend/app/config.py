@@ -54,6 +54,13 @@ class Settings(BaseSettings):
 
     api_port: int = 8000
 
+    # Off by default — nightly auto-scanning is opt-in per source (see
+    # ScheduledSource / the Scan Sources page toggle), and this is the master
+    # switch: even with sources marked for auto-scan, nothing runs unless
+    # this is also true. scheduler_hour is a 0-23 local-time hour.
+    scheduler_enabled: bool = False
+    scheduler_hour: int = 2
+
     # Auth — signs session tokens (see app/auth/security.py). If left blank,
     # a random key is generated on first run and persisted to
     # DATA_DIR/.secret_key so sessions survive restarts without requiring

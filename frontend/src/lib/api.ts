@@ -141,6 +141,14 @@ export const api = {
   listEmailAccounts: () => request<import("./types").EmailAccount[]>("/email-accounts"),
   disconnectEmailAccount: (id: string) => request<void>(`/email-accounts/${id}`, { method: "DELETE" }),
 
+  listScheduledSources: () => request<import("./types").ScheduledSource[]>("/scheduled-sources"),
+  addScheduledSource: (kind: "folder" | "email_account", ref: string, includeSubfolders = true) =>
+    request<import("./types").ScheduledSource>("/scheduled-sources", {
+      method: "POST",
+      body: JSON.stringify({ kind, ref, include_subfolders: includeSubfolders }),
+    }),
+  removeScheduledSource: (id: string) => request<void>(`/scheduled-sources/${id}`, { method: "DELETE" }),
+
   dashboardSummary: () => request<import("./types").DashboardSummary>("/dashboard/summary"),
 
   generateSampleData: (initial: number, followups: number, upskill: number, seed: number) =>

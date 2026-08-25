@@ -22,6 +22,7 @@ from app.routes import (
     jobs,
     matches,
     scan,
+    scheduled_sources,
 )
 
 logger = get_logger(__name__)
@@ -29,11 +30,23 @@ logger = get_logger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    from app.dependencies import get_llm_client, get_storage
+
     settings = get_settings()
     configure_logging(settings.log_level)
     init_dependencies(settings)
     logger.info("startup", use_mock=settings.use_mock, data_dir=str(settings.data_dir_path))
+
+    scheduler = None
+    if settings.scheduler_enabled:
+        from app.scheduler import start_scheduler
+
+        scheduler = start_scheduler(get_storage(), get_llm_client(), settings)
+
     yield
+
+    if scheduler is not None:
+        scheduler.shutdown(wait=False)
 
 
 app = FastAPI(title="Recruit Assistant API", lifespan=lifespan)
@@ -64,4 +77,5 @@ app.include_router(criteria.router, dependencies=protected)
 app.include_router(history.router, dependencies=protected)
 app.include_router(draft_email.router, dependencies=protected)
 app.include_router(dev_tools.router, dependencies=protected)
+app.include_router(scheduled_sources.router, dependencies=protected)
 app.include_router(email_accounts.router)

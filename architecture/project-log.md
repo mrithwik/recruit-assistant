@@ -531,6 +531,52 @@ still degrades gracefully), `test_email_ingestor_attachments.py` (multi-attachme
 right primary + records the rest for both Gmail and Outlook; single-attachment — the
 common/existing case — is unaffected). Frontend typechecks clean.
 
+## 19. Hardening plan, Stage 5 — opt-in off-hours scheduler
+
+The last stage of the hardening plan. `apscheduler` was already a dependency but
+`scheduler/__init__.py` was an empty stub. Per explicit user decision: ship it, but off by
+default, with per-source opt-in the user controls — not automatic behavior sprung on anyone.
+
+Added `ScheduledSource` (new table: `kind` "folder"|"email_account", `ref`, `last_run_at`) —
+a row here is the only thing that makes a source eligible for the nightly job; nothing is
+auto-scanned just because it was scanned on-demand once. CRUD lives at
+`routes/scheduled_sources.py`. `SCHEDULER_ENABLED` (default `false`) is the master switch —
+`main.py`'s lifespan only imports and starts `scheduler.start_scheduler()` when it's true, so
+with the shipped default literally zero scheduler code path is reached. The nightly job
+(`scheduler._run_nightly_scan`, cron-triggered via `SCHEDULER_HOUR`, default 2am) reuses the
+exact same `run_scan()` pipeline and email-ingestor selection the on-demand `/scan/*` routes
+use — `build_email_ingestor()` was extracted out of `routes/scan.py` specifically so the
+scheduler isn't a second parallel implementation of "which ingestor for this account." Scan
+Sources page gets a small clock-icon toggle next to each folder chip and email account row
+(off by default, per the plan), with an inline note that it also needs the server-side setting.
+
+Two real bugs caught by this stage's own tests before either reached the real app:
+
+1. **The nightly job unconditionally loaded the full mock-email fixture manifest** (thousands
+   of files off disk) even when zero email sources were scheduled — a folder-only nightly run
+   would have taken ~17s of pure file I/O for no reason every single night. Caught because the
+   first version of `test_nightly_scan_runs_for_scheduled_folder_source` was suspiciously slow
+   (25s) compared to everything else in the suite; profiled with `cProfile` rather than
+   shrugging it off, found 14k `pathlib.read_bytes` calls, fixed by loading the manifest
+   lazily (only the first time an email-kind source is actually encountered) instead of
+   unconditionally up front. Confirmed via profiling again: 19ms.
+2. **`POST /scheduled-sources` threw `DetachedInstanceError`** the first time it was actually
+   exercised through the real FastAPI app (not just unit-tested against the storage layer) —
+   `session.commit()` expires ORM attributes by default, and returning the object for
+   `response_model` serialization after the session's `with` block closes means pydantic can't
+   read it. Fixed the same way `routes/jobs.py`'s `create_job` already does (an established
+   pattern in this codebase, not a new one): `session.refresh(source)` before returning.
+
+Verified: full backend suite (66 passed, 2 pre-existing golden skips) — new tests
+`test_scheduler.py` (nightly job actually scans a scheduled folder source and updates
+`last_run_at`; no-op with zero scheduled sources; confirms `start_scheduler` is never called
+when `SCHEDULER_ENABLED=false`) and `test_scheduled_sources.py` (full CRUD against the real
+FastAPI app via `TestClient`, incl. auth-required and duplicate-add dedup). Frontend
+typechecks and builds clean. End-to-end on an isolated instance (`:8004`/`:5177`, throwaway
+`/tmp` paths): added a folder, toggled its auto-scan clock icon on, reloaded the page and
+confirmed the toggle state persisted server-side (not just client state), toggled back off —
+zero console errors throughout.
+
 ## Cross-references
 
 - [Design Decisions](design-decisions.md) — the ADRs behind each choice above

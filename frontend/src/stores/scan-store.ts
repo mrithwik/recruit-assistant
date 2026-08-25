@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { api } from "../lib/api";
-import type { EmailAccount, GenerateSampleDataResult, ScanResult } from "../lib/types";
+import type { EmailAccount, GenerateSampleDataResult, ScanResult, ScheduledSource } from "../lib/types";
 
 interface ScanState {
   folderPaths: string[];
@@ -16,6 +16,10 @@ interface ScanState {
   // so navigating away from Scan Sources and back doesn't lose the last-generated dataset —
   // this was reported as "generated data not showing up when I go between tabs".
   lastGenerated: GenerateSampleDataResult | null;
+  // Opt-in nightly auto-scan (off by default, see backend/app/scheduler) —
+  // not persisted client-side like the fields above, since the server is
+  // the source of truth for which sources are scheduled.
+  scheduledSources: ScheduledSource[];
   setFolderPaths: (paths: string[]) => void;
   setIncludeSubfolders: (v: boolean) => void;
   setDateRange: (start?: string, end?: string) => void;
@@ -25,6 +29,8 @@ interface ScanState {
   scanFolders: () => Promise<void>;
   scanEmail: () => Promise<void>;
   setLastGenerated: (result: GenerateSampleDataResult) => void;
+  fetchScheduledSources: () => Promise<void>;
+  setSourceAutoScan: (kind: "folder" | "email_account", ref: string, enabled: boolean, includeSubfolders?: boolean) => Promise<void>;
 }
 
 export const useScanStore = create<ScanState>()(
@@ -37,6 +43,7 @@ export const useScanStore = create<ScanState>()(
       lastResult: null,
       scanning: false,
       lastGenerated: null,
+      scheduledSources: [],
       setFolderPaths: (paths) => set({ folderPaths: paths }),
       setIncludeSubfolders: (v) => set({ includeSubfolders: v }),
       setDateRange: (start, end) => set({ dateStart: start, dateEnd: end }),
@@ -80,6 +87,23 @@ export const useScanStore = create<ScanState>()(
         }
       },
       setLastGenerated: (result) => set({ lastGenerated: result }),
+      fetchScheduledSources: async () => {
+        const scheduledSources = await api.listScheduledSources();
+        set({ scheduledSources });
+      },
+      setSourceAutoScan: async (kind, ref, enabled, includeSubfolders = true) => {
+        const { scheduledSources } = get();
+        const existing = scheduledSources.find((s) => s.kind === kind && s.ref === ref);
+        if (enabled) {
+          if (existing) return;
+          const created = await api.addScheduledSource(kind, ref, includeSubfolders);
+          set({ scheduledSources: [...scheduledSources, created] });
+        } else {
+          if (!existing) return;
+          await api.removeScheduledSource(existing.id);
+          set({ scheduledSources: scheduledSources.filter((s) => s.id !== existing.id) });
+        }
+      },
     }),
     {
       name: "recruit-assistant-scan-store",
