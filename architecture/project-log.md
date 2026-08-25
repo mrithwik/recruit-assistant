@@ -428,6 +428,34 @@ Verified: full backend suite (48 passed, 2 pre-existing golden-model skips) plus
 confirmed paginated/sorted/searched `/candidates` responses all correct (total counts, search
 hits, sort order) — no functional regressions from the rewrite.
 
+## 16. Hardening plan, Stage 2 — git init + CI
+
+Discovered mid-plan: the project had no git repository at all (`git status` failed outright),
+which blocks GitHub Actions entirely — CI needs a repo pushed to GitHub to run against. Asked
+the user how to handle it; chose to initialize git now and add CI, with the user pushing to
+GitHub themselves when ready (nothing was pushed anywhere by this work).
+
+Ran `git init`, reviewed the diff against `.gitignore` (already correctly excluded `.env`,
+`data/`, `sample_data/`, `node_modules/`) before committing, and made the initial commit (174
+files). Added `.github/workflows/ci.yml`: a `backend` job (`pip install -e ".[dev]"`, `pytest
+backend/tests/` with `USE_MOCK=true` so it needs no API keys) and a `frontend` job (`npm ci`,
+`npm run lint`, `npm run build` — build already includes `tsc -b` so this covers typecheck).
+Both jobs reuse the exact commands already in the `Makefile` (`make test`, `make lint`, `make
+build-frontend`) rather than inventing new ones.
+
+`ruff check backend/` surfaced ~120 pre-existing findings (mostly `datetime.utcnow()`
+deprecation warnings scattered across the codebase, unrelated to this pass) — gating on that
+today would make CI red on the very first run for debt nobody was asked to fix. Kept it in the
+workflow as `continue-on-error: true` (visible, not blocking) rather than either silently
+dropping it or scope-creeping into fixing 120 findings; a real lint-debt cleanup is its own
+future task. Frontend's `npm run lint` (oxlint) already passes clean (warnings only, exit 0).
+
+Verified the gate actually gates, not just decoratively: temporarily broke
+`test_score_to_tier_bands`'s assertion, ran the exact CI test command locally, confirmed it
+failed (`1 failed, 47 passed`), reverted, confirmed green again (48 passed). No live GitHub
+Actions run yet — that requires the user to push this repo to a GitHub remote, which wasn't
+done as part of this pass.
+
 ## Cross-references
 
 - [Design Decisions](design-decisions.md) — the ADRs behind each choice above
