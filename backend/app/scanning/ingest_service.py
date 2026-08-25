@@ -170,6 +170,7 @@ async def run_scan(
                 content_hash=file_hash,
                 file_path=file_path,
                 date_submitted=ingested.date_submitted,
+                additional_attachments=ingested.additional_attachments,
             )
             session.add(source)
             seen_sources.add((file_hash, ingested.source_ref))

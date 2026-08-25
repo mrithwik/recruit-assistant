@@ -12,9 +12,12 @@ import docx
 import pdfplumber
 from pypdf import PdfReader
 
+from app.logging import get_logger
 from app.matching.llm_client import LLMClient
 from app.models.enums import EmploymentStatus, WorkVisaStatus
 from app.models.schemas import CandidateProfile
+
+logger = get_logger(__name__)
 
 MIN_VIABLE_TEXT_LENGTH = 200
 
@@ -56,7 +59,33 @@ def _extract_pdf_text(file_bytes: bytes) -> str:
     if len(text.strip()) < MIN_VIABLE_TEXT_LENGTH:
         reader = PdfReader(io.BytesIO(file_bytes))
         text = "\n".join(page.extract_text() or "" for page in reader.pages)
+    if len(text.strip()) < MIN_VIABLE_TEXT_LENGTH:
+        text = _ocr_pdf_text(file_bytes)
     return text
+
+
+def _ocr_pdf_text(file_bytes: bytes) -> str:
+    """Last-resort fallback when pdfplumber/pypdf both come back thin — the
+    signature of a scanned/image PDF with no embedded text layer, which
+    otherwise produces an almost-empty candidate profile. Needs the
+    `tesseract` OCR engine and `poppler` (pdf2image's PDF rasterizer)
+    installed as system binaries — see architecture/getting-started.md.
+    Neither is a hard Python dependency (`pip install ".[ocr]"` pulls the
+    Python side only); if the binaries aren't present this logs and returns
+    "", so ingest continues exactly as it did before OCR existed rather than
+    failing the whole resume over one missing optional feature."""
+    try:
+        import pytesseract
+        from pdf2image import convert_from_bytes
+    except ImportError:
+        logger.warning("ocr_fallback_unavailable", reason="pytesseract/pdf2image not installed")
+        return ""
+    try:
+        images = convert_from_bytes(file_bytes)
+        return "\n".join(pytesseract.image_to_string(image) for image in images)
+    except Exception as exc:  # noqa: BLE001 - OCR is best-effort, never fatal to ingest
+        logger.warning("ocr_fallback_failed", error=str(exc))
+        return ""
 
 
 def _extract_docx_text(file_bytes: bytes) -> str:

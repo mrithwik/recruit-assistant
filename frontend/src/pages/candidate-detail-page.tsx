@@ -248,6 +248,11 @@ export function CandidateDetailPage() {
                       {s.origin}
                     </span>
                     {new Date(s.date_submitted).toLocaleDateString()} · {s.source_ref}
+                    {s.additional_attachments.length > 0 && (
+                      <span className="ml-2 text-zinc-400">
+                        + {s.additional_attachments.join(", ")}
+                      </span>
+                    )}
                   </span>
                   <span className="text-xs text-indigo-600 dark:text-indigo-400">
                     {openSourceId === s.id ? "Hide text" : "View text"}

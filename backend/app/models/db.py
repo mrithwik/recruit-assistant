@@ -115,6 +115,10 @@ class ResumeSource(Base):
     file_path: Mapped[str] = mapped_column(String)
     date_submitted: Mapped[datetime] = mapped_column(DateTime)
     ingested_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+    # Filenames of other qualifying attachments on the same message (cover
+    # letter, portfolio, etc.) that weren't ingested as their own resume —
+    # see IngestedResume.additional_attachments.
+    additional_attachments: Mapped[list] = mapped_column(JSON, default=list)
 
     candidate: Mapped["Candidate"] = relationship(back_populates="sources")
 

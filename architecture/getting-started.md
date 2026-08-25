@@ -84,6 +84,22 @@ list should show your real email address, not a placeholder. Tokens (plus what's
 refresh them — Google access tokens expire in about an hour) are stored in your OS keychain,
 never in the app's database or a config file.
 
+## 6. Enable OCR for scanned/image resumes (optional)
+
+A resume that's a scanned image rather than a real text PDF (common with older or
+paper-scanned applications) extracts as empty text by default, producing a mostly-blank
+candidate profile. OCR fixes this but needs both a Python package group and a system OCR
+engine — neither is installed by default since most resumes don't need it:
+
+```bash
+pip install -e ".[ocr]"       # pytesseract + pdf2image
+brew install tesseract poppler   # macOS; apt-get install tesseract-ocr poppler-utils on Linux
+```
+
+Nothing else to configure — `scanning/parser.py` only tries OCR when normal text extraction
+comes back thin, and degrades silently (no OCR attempt, same behavior as before this existed)
+if either the Python packages or the system binaries aren't present.
+
 ## Troubleshooting
 
 - **"No LLM provider configured"** — set `USE_MOCK=true`, or set an API key.

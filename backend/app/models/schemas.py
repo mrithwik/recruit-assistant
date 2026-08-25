@@ -121,6 +121,7 @@ class ResumeSourceOut(BaseModel):
     origin: str
     source_ref: str
     date_submitted: datetime
+    additional_attachments: list[str] = Field(default_factory=list)
 
 
 class CandidateDetailOut(CandidateOut):
@@ -144,6 +145,12 @@ class IngestedResume(BaseModel):
     date_submitted: datetime
     sender_email: str = ""
     sender_name: str = ""
+    # Filenames of other qualifying attachments on the same message (cover
+    # letter, portfolio, transcript) — recorded as metadata on the resulting
+    # ResumeSource rather than each being ingested as its own equally-weighted
+    # "resume" (which previously ran full LLM extraction on a cover letter
+    # and could overwrite better fields from the actual resume).
+    additional_attachments: list[str] = Field(default_factory=list)
 
 
 class ScanFolderRequest(BaseModel):

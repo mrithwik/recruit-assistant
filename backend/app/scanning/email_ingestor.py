@@ -72,27 +72,36 @@ class GmailIngestor(ResumeIngestor):
         date_submitted = _parse_email_date(headers.get("Date"))
         sender = headers.get("From", "")
 
-        for part in _walk_parts(msg.get("payload", {})):
-            filename = part.get("filename", "")
-            if not filename or _ext(filename) not in SUPPORTED_EXTENSIONS:
-                continue
-            attachment_id = part.get("body", {}).get("attachmentId")
-            if not attachment_id:
-                continue
-            att_resp = self._client.get(f"/messages/{message_id}/attachments/{attachment_id}")
-            att_resp.raise_for_status()
-            import base64
+        # A message can carry more than one qualifying attachment (resume +
+        # cover letter, say). Only the first is ingested as the resume;
+        # yielding every one as its own equally-weighted IngestedResume
+        # previously ran full LLM extraction on a cover letter and could
+        # overwrite better fields already parsed from the actual resume —
+        # the rest are recorded as filenames on the primary one instead.
+        qualifying_parts = [
+            part
+            for part in _walk_parts(msg.get("payload", {}))
+            if part.get("filename") and _ext(part["filename"]) in SUPPORTED_EXTENSIONS and part.get("body", {}).get("attachmentId")
+        ]
+        if not qualifying_parts:
+            return
 
-            file_bytes = base64.urlsafe_b64decode(att_resp.json()["data"])
-            yield IngestedResume(
-                origin=ResumeOrigin.EMAIL,
-                source_ref=f"{self.account_email}:{message_id}",
-                file_bytes=file_bytes,
-                filename=filename,
-                date_submitted=date_submitted,
-                sender_email=_extract_email(sender),
-                sender_name=_extract_name(sender),
-            )
+        primary, *rest = qualifying_parts
+        import base64
+
+        att_resp = self._client.get(f"/messages/{message_id}/attachments/{primary['body']['attachmentId']}")
+        att_resp.raise_for_status()
+        file_bytes = base64.urlsafe_b64decode(att_resp.json()["data"])
+        yield IngestedResume(
+            origin=ResumeOrigin.EMAIL,
+            source_ref=f"{self.account_email}:{message_id}",
+            file_bytes=file_bytes,
+            filename=primary["filename"],
+            date_submitted=date_submitted,
+            sender_email=_extract_email(sender),
+            sender_name=_extract_name(sender),
+            additional_attachments=[part["filename"] for part in rest],
+        )
 
 
 class OutlookIngestor(ResumeIngestor):
@@ -137,22 +146,26 @@ class OutlookIngestor(ResumeIngestor):
 
         att_resp = self._client.get(f"/messages/{message_id}/attachments")
         att_resp.raise_for_status()
-        for att in att_resp.json().get("value", []):
-            filename = att.get("name", "")
-            if _ext(filename) not in SUPPORTED_EXTENSIONS:
-                continue
-            import base64
+        # Same "only the first qualifying attachment is the resume" rule as
+        # GmailIngestor — see its _extract_attachments for why.
+        qualifying = [att for att in att_resp.json().get("value", []) if _ext(att.get("name", "")) in SUPPORTED_EXTENSIONS]
+        if not qualifying:
+            return
 
-            file_bytes = base64.b64decode(att.get("contentBytes", ""))
-            yield IngestedResume(
-                origin=ResumeOrigin.EMAIL,
-                source_ref=f"{self.account_email}:{message_id}",
-                file_bytes=file_bytes,
-                filename=filename,
-                date_submitted=date_submitted,
-                sender_email=sender.get("address", ""),
-                sender_name=sender.get("name", ""),
-            )
+        primary, *rest = qualifying
+        import base64
+
+        file_bytes = base64.b64decode(primary.get("contentBytes", ""))
+        yield IngestedResume(
+            origin=ResumeOrigin.EMAIL,
+            source_ref=f"{self.account_email}:{message_id}",
+            file_bytes=file_bytes,
+            filename=primary.get("name", ""),
+            date_submitted=date_submitted,
+            sender_email=sender.get("address", ""),
+            sender_name=sender.get("name", ""),
+            additional_attachments=[att.get("name", "") for att in rest],
+        )
 
 
 class MockEmailIngestor(ResumeIngestor):

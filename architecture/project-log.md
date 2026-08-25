@@ -498,6 +498,39 @@ account was available in this environment, so the actual browser-based connect �
 scan round trip against a live inbox is still unverified; that's on the user to try against
 their own account per the updated getting-started.md steps.
 
+## 18. Hardening plan, Stage 4 — attachment scanning depth
+
+Two gaps closed, both from the earlier research pass:
+
+**OCR fallback for scanned/image PDFs.** `scanning/parser.py`'s `_extract_pdf_text` gave up
+after pdfplumber and pypdf both came back thin — a scanned-image resume produced an
+almost-empty profile. Added `_ocr_pdf_text()` as a third fallback (`pytesseract` +
+`pdf2image`), tried only when the first two are still thin. Neither Python package is a hard
+dependency (new `pip install ".[ocr]"` optional group) since they also need the `tesseract`
+and `poppler` system binaries, which most installs won't have — missing either degrades to
+returning `""` and logging, exactly the pre-OCR behavior, never a crash. Documented the
+install steps (both the pip extra and the system binaries) in getting-started.md.
+
+**Multi-attachment emails were silently mis-ingested.** `GmailIngestor`/`OutlookIngestor`'s
+`_extract_attachments` yielded a separate `IngestedResume` for *every* qualifying attachment
+on a message — a resume + cover letter sent together got the cover letter run through full
+LLM structured-extraction as if it were an equally-valid resume, and ingested as a second
+`ResumeSource` that could overwrite already-correct fields parsed from the real resume with
+worse ones from the cover letter. Fixed: only the first qualifying attachment is ingested as
+the resume; the rest are recorded as filenames on `IngestedResume.additional_attachments` →
+`ResumeSource.additional_attachments` (new JSON column — auto-migrates on existing databases
+via the mechanism from section 13, confirmed against a simulated pre-migration
+`resume_sources` table) and surfaced as a small inline hint next to each source entry on the
+candidate detail page (not full "additional documents" UI — deferred per the original plan as
+a reasonable fast-follow, not required for this pass).
+
+Verified: full backend suite (58 passed, 2 pre-existing golden skips) plus new tests —
+`test_ocr_fallback.py` (unavailable-degrades-gracefully, using this environment's actual
+missing-dependency state rather than simulating it; available-and-used; available-but-fails
+still degrades gracefully), `test_email_ingestor_attachments.py` (multi-attachment picks the
+right primary + records the rest for both Gmail and Outlook; single-attachment — the
+common/existing case — is unaffected). Frontend typechecks clean.
+
 ## Cross-references
 
 - [Design Decisions](design-decisions.md) — the ADRs behind each choice above

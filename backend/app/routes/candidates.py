@@ -129,7 +129,13 @@ def list_candidate_sources(candidate_id: str, storage: BaseStorageBackend = Depe
             ).scalars()
         )
         return [
-            ResumeSourceOut(id=s.id, origin=s.origin, source_ref=s.source_ref, date_submitted=s.date_submitted)
+            ResumeSourceOut(
+                id=s.id,
+                origin=s.origin,
+                source_ref=s.source_ref,
+                date_submitted=s.date_submitted,
+                additional_attachments=s.additional_attachments,
+            )
             for s in sources
         ]
 

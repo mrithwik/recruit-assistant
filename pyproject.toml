@@ -29,6 +29,14 @@ dev = [
     "pytest-asyncio>=0.24",
     "ruff>=0.7",
 ]
+# OCR fallback for scanned/image PDFs (see scanning/parser.py). Also needs
+# the `tesseract` and `poppler` system binaries — not installable via pip —
+# see architecture/getting-started.md. Optional: without it, thin/scanned
+# PDFs just extract as before (regex hints only, no OCR attempt).
+ocr = [
+    "pytesseract>=0.3",
+    "pdf2image>=1.17",
+]
 
 [tool.setuptools.packages.find]
 where = ["backend"]

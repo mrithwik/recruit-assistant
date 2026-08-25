@@ -68,6 +68,7 @@ export interface ResumeSourceInfo {
   origin: string;
   source_ref: string;
   date_submitted: string;
+  additional_attachments: string[];
 }
 
 export interface JobMatchSummary {
