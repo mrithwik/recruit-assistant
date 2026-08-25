@@ -1,0 +1,7 @@
+{
+  "name": "weak_backend_match",
+  "job_text": "Senior Backend Engineer. Requires 5+ years Python, deep FastAPI experience, PostgreSQL, and microservices architecture. Remote OK.",
+  "resume_text": "Jamie Lee. 1 year of experience as a frontend intern building React components and CSS layouts. No backend or Python experience listed. Currently a bootcamp graduate looking for first full-time role.",
+  "expected_tier_max": "average_match",
+  "notes": "No domain overlap with the JD's core requirements (Python/FastAPI/backend) and well under the experience bar — should score low with a real model."
+}

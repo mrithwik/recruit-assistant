@@ -1,0 +1,97 @@
+"""
+Central settings for the single-process backend, read from environment / .env.
+
+Everything the app needs at startup lives here so config stays 12-factor
+(fail-fast type validation instead of runtime KeyErrors), mirroring the
+Pydantic Settings pattern used across Prodigon's services.
+"""
+
+from pathlib import Path
+
+from pydantic_settings import BaseSettings
+
+
+class Settings(BaseSettings):
+    service_name: str = "recruit-assistant"
+    environment: str = "development"
+    log_level: str = "INFO"
+
+    # Mock mode bypasses external LLM + email API calls entirely, using
+    # MockLLMClient / MockEmailIngestor fixtures — lets the whole app run
+    # offline with zero API keys, which is also what CI/golden tests use.
+    use_mock: bool = True
+
+    # Points MockEmailIngestor at a generated dataset (see
+    # scripts/generate_sample_data.py) so "Scan email" is testable at volume
+    # with zero OAuth setup. Ignored unless use_mock is true. A demo mailbox
+    # is auto-seeded in EmailAccount when this is set (see main.py lifespan).
+    mock_email_fixtures_path: str = ""
+
+    # LLM (OpenRouter primary, OpenAI fallback)
+    openrouter_api_key: str = ""
+    openai_api_key: str = ""
+    llm_triage_model: str = "openrouter/meta-llama/llama-3.1-8b-instruct"
+    llm_scoring_model: str = "openrouter/openai/gpt-4.1-mini"
+    llm_judge_model: str = "openrouter/anthropic/claude-3.5-sonnet"
+    embedding_model: str = "openrouter/openai/text-embedding-3-small"
+
+    # Caps in-flight LLM calls during matching/embedding (asyncio.gather runs
+    # them concurrently instead of one-at-a-time) — high enough to actually
+    # speed things up, low enough not to trip provider rate limits.
+    max_concurrent_llm_calls: int = 8
+
+    # Email OAuth
+    google_oauth_client_id: str = ""
+    google_oauth_client_secret: str = ""
+    ms_oauth_client_id: str = ""
+    ms_oauth_client_secret: str = ""
+    ms_oauth_tenant_id: str = "common"
+    oauth_redirect_base_url: str = "http://localhost:8000"
+
+    # Storage
+    data_dir: str = "./data"
+    sqlite_path: str = "./data/recruit_assistant.db"
+
+    api_port: int = 8000
+
+    # Auth — signs session tokens (see app/auth/security.py). If left blank,
+    # a random key is generated on first run and persisted to
+    # DATA_DIR/.secret_key so sessions survive restarts without requiring
+    # the user to configure anything; set SECRET_KEY explicitly in .env for
+    # a stable key across environments (e.g. before a production deploy).
+    secret_key: str = ""
+    # "Keep me signed in" (default, since this is a personal local app) vs a
+    # short session for a shared/borrowed machine — see routes/auth.py.
+    session_ttl_hours_remembered: int = 24 * 30
+    session_ttl_hours_short: int = 12
+
+    model_config = {
+        "env_file": "../.env",
+        "env_file_encoding": "utf-8",
+        "extra": "ignore",
+    }
+
+    @property
+    def data_dir_path(self) -> Path:
+        p = Path(self.data_dir)
+        p.mkdir(parents=True, exist_ok=True)
+        return p
+
+    @property
+    def resolved_secret_key(self) -> str:
+        if self.secret_key:
+            return self.secret_key
+        key_path = self.data_dir_path / ".secret_key"
+        if key_path.exists():
+            return key_path.read_text().strip()
+        import secrets
+
+        key = secrets.token_hex(32)
+        key_path.write_text(key)
+        return key
+
+    @property
+    def candidates_dir(self) -> Path:
+        p = self.data_dir_path / "candidates"
+        p.mkdir(parents=True, exist_ok=True)
+        return p

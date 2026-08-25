@@ -1,0 +1,7 @@
+{
+  "name": "strong_backend_match",
+  "job_text": "Senior Backend Engineer. Requires 5+ years Python, deep FastAPI experience, PostgreSQL, and microservices architecture. Remote OK.",
+  "resume_text": "Alex Chen. 7 years backend engineering. Built and scaled FastAPI microservices handling 10M+ requests/day at a Series C startup. Expert in PostgreSQL query optimization, Docker, Kubernetes. Led a team of 4 backend engineers.",
+  "expected_tier_min": "good_match",
+  "notes": "Clear, strong overlap on every stated requirement plus seniority signal (led a team) — should score high with a real model."
+}
