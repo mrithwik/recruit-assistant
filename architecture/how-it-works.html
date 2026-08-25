@@ -1,0 +1,816 @@
+<title>How Recruit Assistant Works</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700;9..144,900&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;0,700;1,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+<style>
+  :root {
+    --paper: #EEF0F4;
+    --surface: #FFFFFF;
+    --surface-2: #F5F6F9;
+    --ink: #1C2333;
+    --ink-soft: #565F73;
+    --ink-faint: #8991A6;
+    --indigo: #4338CA;
+    --indigo-soft: #EEECFB;
+    --indigo-line: #C7C2F0;
+    --rust: #A34E1F;
+    --rust-soft: #F7ECE3;
+    --rust-line: #E6C7AC;
+    --line: #D7DBE3;
+    --line-soft: #E4E7ED;
+    --good: #1E7F4F;
+    --good-soft: #E4F3EB;
+    --warn: #9A6206;
+    --warn-soft: #FBF0DC;
+    --critical: #B23B3B;
+    --critical-soft: #FBEAEA;
+    --shadow: 0 1px 2px rgba(28,35,51,0.04), 0 6px 20px -8px rgba(28,35,51,0.10);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #10131C;
+      --surface: #171B27;
+      --surface-2: #1D2230;
+      --ink: #E8EAF1;
+      --ink-soft: #A7AFC4;
+      --ink-faint: #6C7488;
+      --indigo: #9089F2;
+      --indigo-soft: #232041;
+      --indigo-line: #3C3670;
+      --rust: #E39A66;
+      --rust-soft: #2C2118;
+      --rust-line: #513824;
+      --line: #2A2F40;
+      --line-soft: #20242F;
+      --good: #5FCB93;
+      --good-soft: #142A20;
+      --warn: #E0AC4C;
+      --warn-soft: #2C2312;
+      --critical: #E38080;
+      --critical-soft: #2C1717;
+      --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 12px 30px -10px rgba(0,0,0,0.5);
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #10131C;
+    --surface: #171B27;
+    --surface-2: #1D2230;
+    --ink: #E8EAF1;
+    --ink-soft: #A7AFC4;
+    --ink-faint: #6C7488;
+    --indigo: #9089F2;
+    --indigo-soft: #232041;
+    --indigo-line: #3C3670;
+    --rust: #E39A66;
+    --rust-soft: #2C2118;
+    --rust-line: #513824;
+    --line: #2A2F40;
+    --line-soft: #20242F;
+    --good: #5FCB93;
+    --good-soft: #142A20;
+    --warn: #E0AC4C;
+    --warn-soft: #2C2312;
+    --critical: #E38080;
+    --critical-soft: #2C1717;
+    --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 12px 30px -10px rgba(0,0,0,0.5);
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: "Source Sans 3", -apple-system, "Segoe UI", sans-serif;
+    font-size: 17px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    * { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; }
+  }
+
+  h1, h2, h3, h4 {
+    font-family: "Fraunces", Georgia, serif;
+    font-weight: 700;
+    text-wrap: balance;
+    color: var(--ink);
+    margin: 0;
+  }
+  p { margin: 0; }
+  a { color: var(--indigo); }
+  code, .mono {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+  }
+
+  /* ---------- shell ---------- */
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 0 32px; }
+  .prose { max-width: 700px; }
+
+  nav.toc {
+    position: sticky; top: 0; z-index: 50;
+    background: color-mix(in srgb, var(--paper) 88%, transparent);
+    backdrop-filter: blur(10px);
+    border-bottom: 1px solid var(--line);
+  }
+  nav.toc .wrap {
+    display: flex; align-items: center; gap: 22px;
+    height: 52px; overflow-x: auto;
+  }
+  nav.toc .brand {
+    font-family: "Fraunces", serif; font-weight: 700; font-size: 15px;
+    color: var(--ink); white-space: nowrap; margin-right: 8px;
+  }
+  nav.toc a {
+    font-size: 13px; color: var(--ink-soft); text-decoration: none;
+    white-space: nowrap; padding: 4px 2px; border-bottom: 2px solid transparent;
+  }
+  nav.toc a:hover, nav.toc a:focus-visible { color: var(--indigo); border-bottom-color: var(--indigo); outline: none; }
+
+  /* ---------- hero ---------- */
+  .hero { padding: 76px 0 56px; }
+  .hero .eyebrow {
+    font-size: 12px; font-weight: 700; letter-spacing: 0.09em; text-transform: uppercase;
+    color: var(--indigo); margin-bottom: 18px; display: block;
+  }
+  .hero h1 { font-size: clamp(34px, 5vw, 54px); line-height: 1.08; letter-spacing: -0.01em; }
+  .hero .dek {
+    margin-top: 22px; font-size: 20px; line-height: 1.55; color: var(--ink-soft);
+    max-width: 640px; font-weight: 400;
+  }
+  .hero .dek strong { color: var(--ink); font-weight: 600; }
+  .hero .meta-row {
+    margin-top: 34px; display: flex; gap: 28px; flex-wrap: wrap;
+  }
+  .hero .meta-item { font-size: 13px; color: var(--ink-faint); }
+  .hero .meta-item b { color: var(--ink-soft); font-weight: 600; }
+
+  /* ---------- section scaffolding ---------- */
+  section { padding: 64px 0; border-top: 1px solid var(--line-soft); }
+  section:first-of-type { border-top: none; }
+  .section-head { margin-bottom: 40px; max-width: 700px; }
+  .section-head .num {
+    font-family: "IBM Plex Mono", monospace; font-size: 13px; color: var(--ink-faint);
+    letter-spacing: 0.04em; margin-bottom: 10px; display: block;
+  }
+  .section-head h2 { font-size: clamp(26px, 3.4vw, 34px); letter-spacing: -0.01em; }
+  .section-head .lede { margin-top: 14px; font-size: 17px; color: var(--ink-soft); line-height: 1.6; }
+
+  /* ---------- pipeline ---------- */
+  .pipeline {
+    display: flex; flex-direction: column; gap: 0;
+    counter-reset: stage;
+  }
+  .stage {
+    display: grid; grid-template-columns: 64px 1fr; gap: 24px;
+    padding: 22px 0;
+  }
+  .stage-num {
+    counter-increment: stage;
+    width: 44px; height: 44px; border-radius: 50%;
+    background: var(--surface); border: 1.5px solid var(--line);
+    display: flex; align-items: center; justify-content: center;
+    font-family: "Fraunces", serif; font-weight: 700; font-size: 16px; color: var(--indigo);
+    box-shadow: var(--shadow);
+  }
+  .stage-num::before { content: counter(stage); }
+  .stage-connector {
+    position: relative;
+  }
+  .stage:not(:last-child) .stage-num::after {
+    content: ""; position: absolute; left: 50%; top: 44px; bottom: -22px;
+    width: 1.5px; background: var(--line); transform: translateX(-50%);
+  }
+  .stage-body h3 { font-size: 19px; margin-bottom: 6px; }
+  .stage-body .lane {
+    font-size: 10.5px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+    display: inline-block; padding: 2px 9px; border-radius: 20px; margin-bottom: 9px;
+  }
+  .lane.human { background: var(--rust-soft); color: var(--rust); border: 1px solid var(--rust-line); }
+  .lane.machine { background: var(--indigo-soft); color: var(--indigo); border: 1px solid var(--indigo-line); }
+  .stage-body p.explain { color: var(--ink-soft); font-size: 15.5px; max-width: 620px; }
+  .stage-body .tech {
+    margin-top: 10px; font-size: 12.5px; color: var(--ink-faint);
+    display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
+  }
+  .stage-body .tech code {
+    background: var(--surface-2); border: 1px solid var(--line-soft); border-radius: 5px;
+    padding: 1px 6px; font-size: 11.5px; color: var(--ink-soft);
+  }
+
+  /* ---------- building blocks ---------- */
+  .blocks {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 18px;
+  }
+  .block {
+    background: var(--surface); border: 1px solid var(--line); border-radius: 14px;
+    padding: 24px; box-shadow: var(--shadow);
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  .block .b-tag {
+    font-size: 10.5px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+    color: var(--indigo);
+  }
+  .block h3 { font-size: 18px; }
+  .block p { color: var(--ink-soft); font-size: 14.5px; }
+  .block .b-tech {
+    margin-top: auto; padding-top: 10px; border-top: 1px solid var(--line-soft);
+    font-size: 12px; color: var(--ink-faint);
+  }
+  .block .b-tech code { color: var(--ink-soft); }
+
+  /* ---------- decisions table ---------- */
+  .decisions { display: flex; flex-direction: column; gap: 14px; }
+  .decision {
+    background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
+    padding: 20px 24px; box-shadow: var(--shadow);
+    display: grid; grid-template-columns: 240px 1fr; gap: 24px; align-items: start;
+  }
+  .decision .d-choice { font-family: "Fraunces", serif; font-weight: 600; font-size: 16.5px; }
+  .decision .d-detail p { font-size: 14.5px; color: var(--ink-soft); }
+  .decision .d-detail .not-this {
+    font-size: 13px; color: var(--ink-faint); margin-bottom: 8px;
+  }
+  .decision .d-detail .not-this .x { color: var(--critical); font-weight: 700; margin-right: 4px; }
+  .decision .d-detail .this-instead .check { color: var(--good); font-weight: 700; margin-right: 4px; }
+
+  /* ---------- privacy grid ---------- */
+  .privacy-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px;
+  }
+  .privacy-card {
+    background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
+    padding: 20px; box-shadow: var(--shadow);
+  }
+  .privacy-card .p-icon {
+    width: 30px; height: 30px; border-radius: 8px; background: var(--good-soft);
+    color: var(--good); display: flex; align-items: center; justify-content: center;
+    font-size: 15px; margin-bottom: 12px; font-weight: 700;
+  }
+  .privacy-card h4 { font-size: 15px; margin-bottom: 6px; }
+  .privacy-card p { font-size: 13.5px; color: var(--ink-soft); }
+
+  /* ---------- tech reference ---------- */
+  .stack-pills { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
+  .stack-pills .pill {
+    font-family: "IBM Plex Mono", monospace; font-size: 12px; color: var(--ink-soft);
+    background: var(--surface-2); border: 1px solid var(--line); border-radius: 20px;
+    padding: 5px 12px;
+  }
+  .filetree {
+    background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
+    padding: 22px 26px; box-shadow: var(--shadow); overflow-x: auto;
+    font-family: "IBM Plex Mono", monospace; font-size: 13px; color: var(--ink-soft);
+    line-height: 1.85; white-space: pre;
+  }
+  .filetree .comment { color: var(--ink-faint); }
+  .filetree .dir { color: var(--indigo); font-weight: 600; }
+
+  /* ---------- roadmap ---------- */
+  .roadmap { display: flex; flex-direction: column; gap: 10px; }
+  .road-item {
+    display: grid; grid-template-columns: 110px 1fr; gap: 18px;
+    padding: 14px 0; border-bottom: 1px solid var(--line-soft);
+  }
+  .road-item:last-child { border-bottom: none; }
+  .road-item .status {
+    font-size: 11px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase;
+    padding: 3px 9px; border-radius: 20px; height: fit-content; white-space: nowrap;
+  }
+  .status.done { background: var(--good-soft); color: var(--good); }
+  .status.next { background: var(--warn-soft); color: var(--warn); }
+  .road-item p { font-size: 14.5px; color: var(--ink-soft); }
+  .road-item strong { color: var(--ink); }
+
+  /* ---------- footer ---------- */
+  footer {
+    border-top: 1px solid var(--line); padding: 36px 0 60px;
+    display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;
+  }
+  footer .f-left { font-family: "Fraunces", serif; font-weight: 600; font-size: 14px; color: var(--ink-soft); }
+  footer .f-right { font-size: 12px; color: var(--ink-faint); font-family: "IBM Plex Mono", monospace; }
+
+  @media (max-width: 720px) {
+    .decision { grid-template-columns: 1fr; }
+    .stage { grid-template-columns: 44px 1fr; }
+    .wrap { padding: 0 20px; }
+  }
+</style>
+
+<nav class="toc">
+  <div class="wrap">
+    <span class="brand">Recruit Assistant</span>
+    <a href="#journey">The Journey</a>
+    <a href="#blocks">Building Blocks</a>
+    <a href="#decisions">Why It's Built This Way</a>
+    <a href="#privacy">Privacy</a>
+    <a href="#stack">Under the Hood</a>
+    <a href="#roadmap">What's Next</a>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="wrap">
+    <span class="eyebrow">System Architecture, Plainly Explained</span>
+    <h1>How Recruit Assistant Works</h1>
+    <p class="dek">
+      A recruiter's desk usually ends up with resumes scattered across a downloads folder and
+      an overflowing inbox, and matching any of them to an open role means reading each one by
+      hand. <strong>Recruit Assistant reads both places, figures out who's who even if someone
+      applied twice, and uses AI to score and explain how well each person fits a job</strong>
+      — entirely on your own computer, with nothing sent anywhere you haven't explicitly connected.
+    </p>
+    <div class="meta-row">
+      <span class="meta-item"><b>Runs on:</b> your own laptop, not a shared server</span>
+      <span class="meta-item"><b>Data leaves your machine:</b> only if you connect an email account</span>
+      <span class="meta-item"><b>Reading time:</b> ~9 minutes</span>
+    </div>
+  </div>
+</header>
+
+<section id="journey">
+  <div class="wrap">
+    <div class="section-head">
+      <span class="num">01 — Walkthrough</span>
+      <h2>The journey of one resume</h2>
+      <p class="lede">
+        Follow a single resume from the moment it lands to the moment it shows up as a
+        color-coded match. Every stage below is a real step the software takes — nothing
+        skipped, nothing simplified away. Steps tagged <strong style="color:var(--rust)">you decide</strong>
+        are places a human makes the call; everything else runs automatically.
+      </p>
+    </div>
+
+    <div class="pipeline">
+      <div class="stage">
+        <div class="stage-num"></div>
+        <div class="stage-body">
+          <span class="lane human">You decide</span>
+          <h3>It arrives — from a folder, or an inbox you've connected</h3>
+          <p class="explain">
+            You either point the app at a folder of resumes already on your computer, or let it
+            check a mailbox you've connected (read-only — it can only look, never send or
+            delete). From this point on, it makes no difference which door a resume came
+            through; both are treated identically for everything downstream.
+          </p>
+          <div class="tech">
+            <code>scanning/folder_ingestor.py</code>
+            <code>scanning/email_ingestor.py</code>
+            <span>— one shared output shape either way (<code>IngestedResume</code>)</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="stage">
+        <div class="stage-num"></div>
+        <div class="stage-body">
+          <span class="lane machine">Automatic</span>
+          <h3>It gets read</h3>
+          <p class="explain">
+            The text is pulled out of the PDF, Word document, or plain text file. If it's a
+            scanned image with no real text underneath it — a photocopy of a resume, say — the
+            software falls back to optical character recognition (OCR), essentially "reading"
+            the picture the same way a person would, rather than giving up.
+          </p>
+          <div class="tech">
+            <code>scanning/parser.py</code>
+            <span>— pdfplumber/pypdf/python-docx first, OCR (pytesseract) only if that comes back too thin</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="stage">
+        <div class="stage-num"></div>
+        <div class="stage-body">
+          <span class="lane machine">Automatic</span>
+          <h3>It gets understood</h3>
+          <p class="explain">
+            An AI model reads the extracted text and pulls out the structured facts a recruiter
+            actually cares about: legal name, contact info, skills, years of experience,
+            education, work-authorization status. Anything it's not confident about is left
+            blank rather than guessed — a blank field is a prompt to double-check, a wrong
+            guess is a silent mistake.
+          </p>
+          <div class="tech">
+            <code>scanning/parser.py</code>
+            <span>— structured LLM extraction, cross-checked against pattern-matched email/phone/LinkedIn/GitHub</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="stage">
+        <div class="stage-num"></div>
+        <div class="stage-body">
+          <span class="lane machine">Automatic</span>
+          <h3>It gets recognized</h3>
+          <p class="explain">
+            Before saving anything, the system asks: have we seen this person before? It checks
+            by email address first, then by name-plus-phone as a fallback. If yes, this new
+            resume <em>updates</em> their existing profile — new skills get added, a longer
+            work history overwrites a shorter one — instead of creating a confusing second
+            entry for the same human being.
+          </p>
+          <div class="tech">
+            <code>scanning/identity_resolution.py</code>
+            <span>— the reason someone who applies again six months later, with a stronger resume, stays one person, not two</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="stage">
+        <div class="stage-num"></div>
+        <div class="stage-body">
+          <span class="lane machine">Automatic</span>
+          <h3>It gets filed</h3>
+          <p class="explain">
+            The resume itself, a short AI-written summary, and a small metadata note all get
+            saved to an actual folder on your disk, organized by date — so you can find and
+            open the real file later, even offline, even years from now. The structured facts
+            also get saved to a local database so the app can search and filter across everyone.
+          </p>
+          <div class="tech">
+            <code>scanning/mirror_writer.py</code>
+            <span>— <code>data/candidates/&lt;date&gt;/&lt;name&gt;/resume.pdf</code> + summary + a local SQLite database</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="stage">
+        <div class="stage-num"></div>
+        <div class="stage-body">
+          <span class="lane human">You decide</span>
+          <h3>You describe the job, and ask for matches</h3>
+          <p class="explain">
+            You write or paste a job description and click "Run matching." Behind the scenes,
+            this is where things get interesting — the next three steps only happen when you
+            ask for them, and they're what actually turn a pile of resumes into a ranked
+            shortlist.
+          </p>
+        </div>
+      </div>
+
+      <div class="stage">
+        <div class="stage-num"></div>
+        <div class="stage-body">
+          <span class="lane machine">Automatic</span>
+          <h3>The field gets narrowed — cheaply, first</h3>
+          <p class="explain">
+            Reading every single resume in depth with AI, for every job, would be slow and
+            expensive at real volume. So a fast, inexpensive pass compares the <em>meaning</em>
+            of the job description against everyone's profile using something called an
+            embedding — a mathematical fingerprint of what a piece of text is actually about —
+            and keeps only the strongest handful of candidates for the next, more careful step.
+          </p>
+          <div class="tech">
+            <code>matching/embeddings.py</code>
+            <span>— cosine similarity over the whole pool, computed once per candidate and reused, not recalculated every time</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="stage">
+        <div class="stage-num"></div>
+        <div class="stage-body">
+          <span class="lane machine">Automatic</span>
+          <h3>The shortlist gets scored, with reasons</h3>
+          <p class="explain">
+            Only the narrowed-down shortlist gets the expensive, careful treatment: a stronger
+            AI model reads the actual job description against the actual resume and produces a
+            0-100 score, a plain-language list of what matched, what's missing, and any
+            information that's still unclear — never just a bare number with no explanation.
+          </p>
+          <div class="tech">
+            <code>matching/matcher.py</code>
+            <span>— <code>deep_score()</code>, run concurrently across the shortlist rather than one at a time</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="stage">
+        <div class="stage-num"></div>
+        <div class="stage-body">
+          <span class="lane machine">Automatic</span>
+          <h3>Borderline calls get a second opinion</h3>
+          <p class="explain">
+            Any score that lands in an ambiguous middle range (not clearly a great fit, not
+            clearly a poor one) gets reviewed a second time by an independent AI pass acting as
+            a judge — it can agree with the original score, or correct it. This is the "AI
+            checking AI" step, aimed at exactly the calls a human reviewer would also want to
+            look at twice.
+          </p>
+          <div class="tech">
+            <code>matching/matcher.py</code>
+            <span>— <code>judge_score()</code>, triggered only for scores between 40 and 70</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="stage">
+        <div class="stage-num"></div>
+        <div class="stage-body">
+          <span class="lane human">You decide</span>
+          <h3>Results show up, color-coded — and you take it from there</h3>
+          <p class="explain">
+            Great, Good, Average, or Poor — plus a red-flag override for anything that should
+            never be buried in the middle of a list regardless of score. Every result carries
+            its reasoning, so you're reviewing a case, not trusting a black box. From here you
+            can flag a candidate, or generate a draft outreach email pre-filled with the actual
+            reasons this person is a good fit.
+          </p>
+          <div class="tech">
+            <code>matching/matcher.py</code> <span>(<code>score_to_tier</code>)</span>
+            <code>email_draft/generator.py</code>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="blocks">
+  <div class="wrap">
+    <div class="section-head">
+      <span class="num">02 — Components</span>
+      <h2>The building blocks</h2>
+      <p class="lede">
+        Six pieces do essentially all of the work. Each one solves exactly one problem, and
+        none of them know or care about the internal details of the others — which is what
+        lets any one of them change later without the rest breaking.
+      </p>
+    </div>
+
+    <div class="blocks">
+      <div class="block">
+        <span class="b-tag">Intake</span>
+        <h3>Two front doors, one filing system</h3>
+        <p>
+          Folder scanning and email scanning are built as two interchangeable "readers" that
+          both hand off the same shape of information to everything downstream. Adding a third
+          source later — a LinkedIn export, an applicant-tracking-system integration — means
+          writing one more reader, not touching anything else.
+        </p>
+        <div class="b-tech"><code>scanning/ingestor_base.py</code> — one shared interface, several implementations</div>
+      </div>
+
+      <div class="block">
+        <span class="b-tag">Intelligence</span>
+        <h3>The matching engine</h3>
+        <p>
+          The cheap-filter → deep-score → judge-review pipeline described above, all in one
+          place. It's deliberately staged rather than one giant AI call, so cost and speed stay
+          predictable even with a pool of tens of thousands of candidates.
+        </p>
+        <div class="b-tech"><code>matching/</code> — embeddings, matcher, judge, prompts, in one module</div>
+      </div>
+
+      <div class="block">
+        <span class="b-tag">Memory</span>
+        <h3>Storage that's local today, portable tomorrow</h3>
+        <p>
+          Everything lives in a local database and a local folder of files — no server, no
+          account, no subscription required to keep using your own data. It's built behind one
+          swappable interface, so a future move to a shared company server or the cloud is a
+          new implementation of that interface, not a rewrite of the app.
+        </p>
+        <div class="b-tech"><code>storage/base.py</code> → <code>storage/local.py</code> (SQLite + files)</div>
+      </div>
+
+      <div class="block">
+        <span class="b-tag">Judgment</span>
+        <h3>Criteria you actually control</h3>
+        <p>
+          Beyond the AI's own read of a resume, you can turn on specific weighted criteria per
+          job — years of experience, location, visa eligibility, certifications — and re-run
+          matching against them without re-scanning every source from scratch.
+        </p>
+        <div class="b-tech"><code>criteria/builtin.py</code>, <code>criteria/service.py</code></div>
+      </div>
+
+      <div class="block">
+        <span class="b-tag">Automation</span>
+        <h3>An optional nightly assistant</h3>
+        <p>
+          You can mark specific folders or mailboxes to be re-scanned automatically overnight —
+          but nothing runs on a schedule unless you explicitly turn it on, source by source. No
+          background behavior is sprung on you.
+        </p>
+        <div class="b-tech"><code>scheduler/</code> — off by default (<code>SCHEDULER_ENABLED=false</code>)</div>
+      </div>
+
+      <div class="block">
+        <span class="b-tag">Output</span>
+        <h3>From match to message</h3>
+        <p>
+          A strong match doesn't just sit in a list — one click drafts a personalized outreach
+          email, pre-filled using the actual reasons the match scored the way it did, ready for
+          you to edit and send yourself.
+        </p>
+        <div class="b-tech"><code>email_draft/generator.py</code></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="decisions">
+  <div class="wrap">
+    <div class="section-head">
+      <span class="num">03 — Tradeoffs</span>
+      <h2>Why it's built this way</h2>
+      <p class="lede">
+        Every non-obvious choice below had a simpler-looking alternative that was considered
+        and turned down, usually because it solved a problem this app doesn't actually have.
+      </p>
+    </div>
+
+    <div class="decisions">
+      <div class="decision">
+        <div class="d-choice">One program,<br>not many small ones</div>
+        <div class="d-detail">
+          <p class="not-this"><span class="x">✕</span> Splitting into several small services that talk to each other over a network — the way a large, team-run platform often does.</p>
+          <p class="this-instead"><span class="check">✓</span> Everything runs as a single program you start with one command, because it's meant to run on one person's laptop. The internal code is still organized into clean, separate modules — so any one piece could become its own service later if this ever needs to scale up, without a rewrite.</p>
+        </div>
+      </div>
+
+      <div class="decision">
+        <div class="d-choice">Local storage,<br>with a door left open</div>
+        <div class="d-detail">
+          <p class="not-this"><span class="x">✕</span> Starting with a cloud database from day one, since "the cloud" is the default assumption for most modern software.</p>
+          <p class="this-instead"><span class="check">✓</span> Your data — resumes, candidate profiles, everything — lives on your own machine by default, under your control. Storage is built behind one clean interface, so if you ever need a shared company server or cloud backend, that's a new plug-in, not a rewrite of everything that depends on it.</p>
+        </div>
+      </div>
+
+      <div class="decision">
+        <div class="d-choice">Match cheaply first,<br>think carefully second</div>
+        <div class="d-detail">
+          <p class="not-this"><span class="x">✕</span> Having the AI carefully read and score every single resume in the pool for every job — the most thorough-sounding approach.</p>
+          <p class="this-instead"><span class="check">✓</span> A near-instant, inexpensive first pass narrows thousands of resumes down to a real shortlist, and only that shortlist gets the slow, careful AI reading. This keeps both the wait time and the AI usage cost bounded, without giving up quality where it actually matters.</p>
+        </div>
+      </div>
+
+      <div class="decision">
+        <div class="d-choice">One person,<br>one profile — always</div>
+        <div class="d-detail">
+          <p class="not-this"><span class="x">✕</span> Keeping email-sourced and folder-sourced resumes as two separate lists, since they arrive through two different paths.</p>
+          <p class="this-instead"><span class="check">✓</span> Every incoming resume is checked against everyone already on file, by email or by name-and-phone, before it's saved. Someone who applies again months later with an updated resume stays one person with an updated history — not a confusing duplicate entry.</p>
+        </div>
+      </div>
+
+      <div class="decision">
+        <div class="d-choice">Email access is<br>read-only, always</div>
+        <div class="d-detail">
+          <p class="not-this"><span class="x">✕</span> Requesting broad mailbox permissions "just in case," which is the path of least resistance when setting up an integration.</p>
+          <p class="this-instead"><span class="check">✓</span> Connecting a mailbox only ever grants permission to <em>read</em> messages looking for attachments — never to send, delete, or modify anything. Even if something went wrong, the app is structurally incapable of sending an email on your behalf.</p>
+        </div>
+      </div>
+
+      <div class="decision">
+        <div class="d-choice">Credentials live in<br>your computer's own lock, not ours</div>
+        <div class="d-detail">
+          <p class="not-this"><span class="x">✕</span> Saving the login token for a connected email account in the app's own database, alongside everything else, for simplicity.</p>
+          <p class="this-instead"><span class="check">✓</span> That token is handed to your operating system's own secure credential store — the same one macOS/Windows uses for saved Wi-Fi passwords — and only a reference to it is kept in the app's database. Disconnecting an account also wipes it from that secure store, with nothing left behind.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="privacy">
+  <div class="wrap">
+    <div class="section-head">
+      <span class="num">04 — Trust</span>
+      <h2>Privacy, in plain terms</h2>
+      <p class="lede">
+        This handles real people's names, contact details, and work history, so the safeguards
+        below aren't an afterthought — they're load-bearing.
+      </p>
+    </div>
+
+    <div class="privacy-grid">
+      <div class="privacy-card">
+        <div class="p-icon">✓</div>
+        <h4>Nothing leaves your machine by default</h4>
+        <p>Candidate data and resumes stay in a local database and local files, unless you explicitly connect an email account or an LLM provider.</p>
+      </div>
+      <div class="privacy-card">
+        <div class="p-icon">✓</div>
+        <h4>Passwords are never stored as plain text</h4>
+        <p>Your login password is run through a one-way hashing process (PBKDF2) before it's saved — the app itself never keeps a readable copy.</p>
+      </div>
+      <div class="privacy-card">
+        <div class="p-icon">✓</div>
+        <h4>Read-only mailbox access, always</h4>
+        <p>A connected email account can only be scanned for attachments — never sent from, deleted from, or otherwise changed.</p>
+      </div>
+      <div class="privacy-card">
+        <div class="p-icon">✓</div>
+        <h4>Login tokens live in your OS's own vault</h4>
+        <p>Not in a database file, not in a config file — in the same secure credential store your operating system already uses for other saved passwords.</p>
+      </div>
+      <div class="privacy-card">
+        <div class="p-icon">✓</div>
+        <h4>Nothing runs on a schedule unless you say so</h4>
+        <p>Automatic overnight re-scanning exists, but is switched off by default and only ever touches sources you've explicitly opted in, one at a time.</p>
+      </div>
+      <div class="privacy-card">
+        <div class="p-icon">✓</div>
+        <h4>You can offer up a test dataset instead</h4>
+        <p>A built-in generator can create thousands of realistic fake resumes for trying the app out, so you never have to test with real candidates' data.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="stack">
+  <div class="wrap">
+    <div class="section-head">
+      <span class="num">05 — Reference</span>
+      <h2>Under the hood</h2>
+      <p class="lede">For the more technically curious — the actual tools this is built with, and how the code is laid out.</p>
+    </div>
+
+    <h3 style="font-size:15px; margin-bottom:6px;">Technology</h3>
+    <div class="stack-pills">
+      <span class="pill">Python · FastAPI</span>
+      <span class="pill">SQLAlchemy + SQLite</span>
+      <span class="pill">React + TypeScript</span>
+      <span class="pill">Vite</span>
+      <span class="pill">Zustand</span>
+      <span class="pill">Tailwind CSS</span>
+      <span class="pill">OpenRouter (primary LLM gateway)</span>
+      <span class="pill">OpenAI (fallback)</span>
+      <span class="pill">Gmail API</span>
+      <span class="pill">Microsoft Graph</span>
+      <span class="pill">OS Keychain (keyring)</span>
+      <span class="pill">APScheduler</span>
+      <span class="pill">pytesseract (OCR, optional)</span>
+      <span class="pill">Docker Compose</span>
+    </div>
+
+    <h3 style="font-size:15px; margin: 30px 0 12px;">Where things live</h3>
+    <div class="filetree"><span class="comment"># the shape of the codebase — modules map directly to the building blocks above</span>
+<span class="dir">backend/app/</span>
+├── <span class="dir">scanning/</span>      <span class="comment"># folder + email readers, text extraction, identity matching</span>
+├── <span class="dir">matching/</span>      <span class="comment"># embeddings, two-stage scorer, AI judge</span>
+├── <span class="dir">storage/</span>       <span class="comment"># the swappable local-database interface</span>
+├── <span class="dir">criteria/</span>      <span class="comment"># built-in + custom weighted matching criteria</span>
+├── <span class="dir">email_auth/</span>    <span class="comment"># OAuth + OS keychain token handling</span>
+├── <span class="dir">email_draft/</span>   <span class="comment"># outreach email generator</span>
+├── <span class="dir">scheduler/</span>     <span class="comment"># opt-in nightly auto-scan</span>
+└── <span class="dir">routes/</span>        <span class="comment"># the API surface the frontend talks to</span>
+
+<span class="dir">frontend/src/</span>
+├── <span class="dir">pages/</span>         <span class="comment"># one screen per sidebar item</span>
+├── <span class="dir">stores/</span>        <span class="comment"># client-side state, one per feature area</span>
+└── <span class="dir">components/</span>    <span class="comment"># the visual building blocks pages are made of</span></div>
+  </div>
+</section>
+
+<section id="roadmap">
+  <div class="wrap">
+    <div class="section-head">
+      <span class="num">06 — Status</span>
+      <h2>What's done, what's next</h2>
+    </div>
+
+    <div class="roadmap">
+      <div class="road-item">
+        <span class="status done">Shipped</span>
+        <p><strong>The full pipeline above</strong> — folder + email intake, identity resolution, two-stage matching with judge review, criteria, outreach drafting, and a personal dashboard.</p>
+      </div>
+      <div class="road-item">
+        <span class="status done">Shipped</span>
+        <p><strong>Performance hardening</strong> — matching and scanning run concurrently instead of one item at a time, candidate search and similarity ranking stay fast at real volume (10,000+ candidates).</p>
+      </div>
+      <div class="road-item">
+        <span class="status done">Shipped</span>
+        <p><strong>Real-inbox readiness</strong> — connected accounts show their real address and refresh their own access automatically instead of quietly expiring.</p>
+      </div>
+      <div class="road-item">
+        <span class="status done">Shipped</span>
+        <p><strong>OCR fallback and cleaner multi-attachment handling</strong> — scanned resumes still get read, and a resume-plus-cover-letter email no longer confuses the two.</p>
+      </div>
+      <div class="road-item">
+        <span class="status done">Shipped</span>
+        <p><strong>Opt-in nightly scanning, Docker packaging, and a public repository</strong> with continuous testing on every change.</p>
+      </div>
+      <div class="road-item">
+        <span class="status next">Later</span>
+        <p><strong>A genuinely shared/cloud version</strong> — the storage interface is already built to support this; it isn't built out yet because nothing has needed it.</p>
+      </div>
+      <div class="road-item">
+        <span class="status next">Later</span>
+        <p><strong>Reading team culture/energy fit from email tone</strong> — deliberately deferred; a more sensitive feature that deserves its own careful design pass.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; width:100%;">
+    <span class="f-left">Recruit Assistant</span>
+    <span class="f-right">local-first · built to run on one laptop</span>
+  </div>
+</footer>

@@ -9,6 +9,7 @@ against job descriptions with LLM scoring, and helps a recruiter act on the resu
 
 | Document | Purpose |
 |----------|---------|
+| [How It Works](how-it-works.html) | Illustrated, plain-language walkthrough — start here if you're non-technical or just want the big picture visually |
 | [System Overview](system-overview.md) | High-level architecture, tech stack, repo structure |
 | [Backend Architecture](backend-architecture.md) | FastAPI app internals: scanning, matching, storage, DI |
 | [Frontend Architecture](frontend-architecture.md) | React SPA: nav, pages, stores, API client |
@@ -22,10 +23,11 @@ against job descriptions with LLM scoring, and helps a recruiter act on the resu
 ## Reading Order
 
 **New to the project?**
-1. [Getting Started](getting-started.md) — run it locally in mock mode first
-2. [System Overview](system-overview.md) — the big picture
-3. [Project Log](project-log.md) — how we got here and what's next
-4. [Data Flow](data-flow.md) — how a resume becomes a scored match
+1. [How It Works](how-it-works.html) — the big picture, visually, no technical background needed
+2. [Getting Started](getting-started.md) — run it locally in mock mode
+3. [System Overview](system-overview.md) — the technical big picture
+4. [Project Log](project-log.md) — how we got here and what's next
+5. [Data Flow](data-flow.md) — how a resume becomes a scored match
 
 **Backend developer?** [Backend Architecture](backend-architecture.md) → [API Reference](api-reference.md)
 

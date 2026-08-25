@@ -10,6 +10,9 @@ Structured after [Prodigon](../prodigon)'s conventions: a Pydantic-Settings-conf
 backend, ADR-documented design decisions, a Makefile as the single command surface, and a
 React/Vite frontend.
 
+**New here?** [How It Works](architecture/how-it-works.html) is an illustrated, plain-language
+walkthrough of the whole system — no technical background required.
+
 ## Quick start (mock mode — no API keys needed)
 
 ```bash
