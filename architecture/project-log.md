@@ -577,6 +577,40 @@ typechecks and builds clean. End-to-end on an isolated instance (`:8004`/`:5177`
 confirmed the toggle state persisted server-side (not just client state), toggled back off —
 zero console errors throughout.
 
+## 20. Repo setup — git, license, Docker packaging
+
+Follow-up work once the hardening plan itself was done. The project had no git repository at
+all until this point (see section 16); it's now pushed to
+`https://github.com/mrithwik/recruit-assistant`. Added `LICENSE` (all rights reserved — a
+deliberate choice, not a default: this handles real candidate PII and isn't intended as an
+open-source project) and `SECURITY.md` documenting the existing safeguards (PBKDF2 password
+hashing, OS-keychain token storage, read-only OAuth scopes).
+
+Added Docker packaging so someone can run the whole app with zero local Python/Node install —
+`docker compose up --build`: `backend/Dockerfile` (installs the existing `pyproject.toml`
+package into a `python:3.12-slim` image), `frontend/Dockerfile` (multi-stage — `node:20-slim`
+build, served by `nginx:alpine`), and `frontend/nginx.conf` reverse-proxying `/api` and
+`/health` to the backend container — mirroring what `vite.config.ts`'s dev-mode proxy already
+does for `npm run dev`, since the production build has no dev server to do that at request
+time. `docker-compose.yml` wires the two together with a named volume for
+`backend/data` (SQLite + resume mirror) so data survives a container restart, and defaults to
+`USE_MOCK=true` — same zero-setup default as the rest of the project.
+
+Verified by actually building and running the stack (`docker compose build` then `up`) rather
+than trusting the Dockerfiles on paper: confirmed the backend container starts and answers
+`/health`, the frontend container serves the built SPA, and nginx's reverse proxy correctly
+forwards both `/api/*` and `/health` to the backend over the internal Docker network. One
+verification snag worth recording: the first build/run used the default `8000`/`5173` ports,
+which — on this machine — briefly overlapped with the real, already-running dev instance
+(Docker Desktop's port-forwarding proxy can coexist with a loopback-bound native process on
+macOS rather than erroring, so both were reachable at once for about 10-15 seconds). Caught
+by checking `lsof` after the fact rather than assuming success; remapped to `8010`/`5183` for
+the rest of verification, tore down and removed the test containers/volumes afterward, and
+confirmed directly via `sqlite3` that the real database was completely unaffected (same
+10,259 candidates, same account) — but the real dev session's browser tab may have
+transiently 401'd and shown a login screen during that window, since its bearer token
+wouldn't have validated against the fresh container's independently-generated secret key.
+
 ## Cross-references
 
 - [Design Decisions](design-decisions.md) — the ADRs behind each choice above

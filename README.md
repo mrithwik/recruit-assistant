@@ -25,6 +25,20 @@ Open http://localhost:5173. Everything works offline out of the box (`USE_MOCK=t
 `.env` by default) — folder scanning, resume parsing, matching, and drafting all run against
 mock LLM responses so you can try the full flow with zero setup.
 
+### Or with Docker (no Python/Node install needed)
+
+```bash
+docker compose up --build
+```
+
+Open http://localhost:5173. Same mock-mode-by-default behavior as above, no local Python or
+Node required — just Docker. Candidate/resume data persists in a named Docker volume across
+restarts (`docker compose down` keeps it; add `-v` to wipe it). To use a real LLM instead of
+mock mode, set `OPENROUTER_API_KEY` (and `USE_MOCK=false`) in your shell before running, or in
+a `.env` file at the repo root — see [architecture/getting-started.md](architecture/getting-started.md).
+Real email OAuth (Gmail/Outlook) needs a system keyring, which isn't set up in the container by
+default — folder scanning and mock-mode email scanning both work fully containerized.
+
 See **[HOW_TO_RUN.md](HOW_TO_RUN.md)** for a step-by-step run/test walkthrough, or
 [architecture/getting-started.md](architecture/getting-started.md) for enabling real LLM
 scoring (OpenRouter/OpenAI) and email scanning (Gmail/Outlook OAuth).

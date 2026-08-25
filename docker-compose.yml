@@ -1,0 +1,33 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    environment:
+      # Defaults to mock mode so this works with zero API keys out of the
+      # box — same default as .env.example. Override with a real
+      # OPENROUTER_API_KEY/OPENAI_API_KEY (and USE_MOCK=false) for real
+      # LLM scoring; see architecture/getting-started.md.
+      - USE_MOCK=${USE_MOCK:-true}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - DATA_DIR=/app/backend/data
+      - SQLITE_PATH=/app/backend/data/recruit_assistant.db
+    volumes:
+      - recruit_data:/app/backend/data
+    ports:
+      # Direct access for debugging/API calls — the frontend container
+      # reaches this over the internal docker network regardless.
+      - "8000:8000"
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    ports:
+      - "5173:80"
+    depends_on:
+      - backend
+
+volumes:
+  recruit_data:
