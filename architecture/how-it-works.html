@@ -1,3 +1,8 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>How Recruit Assistant Works</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -131,7 +136,20 @@
   nav.toc a:hover, nav.toc a:focus-visible { color: var(--indigo); border-bottom-color: var(--indigo); outline: none; }
 
   /* ---------- hero ---------- */
-  .hero { padding: 76px 0 56px; }
+  .hero {
+    padding: 84px 0 60px; position: relative; overflow: hidden;
+  }
+  .hero::before {
+    content: ""; position: absolute; top: -260px; right: -180px; width: 640px; height: 640px;
+    border-radius: 50%; pointer-events: none;
+    background: radial-gradient(circle, color-mix(in srgb, var(--indigo) 20%, transparent) 0%, transparent 68%);
+  }
+  .hero::after {
+    content: ""; position: absolute; bottom: -280px; left: -160px; width: 520px; height: 520px;
+    border-radius: 50%; pointer-events: none;
+    background: radial-gradient(circle, color-mix(in srgb, var(--rust) 14%, transparent) 0%, transparent 70%);
+  }
+  .hero .wrap { position: relative; z-index: 1; }
   .hero .eyebrow {
     font-size: 12px; font-weight: 700; letter-spacing: 0.09em; text-transform: uppercase;
     color: var(--indigo); margin-bottom: 18px; display: block;
@@ -159,7 +177,94 @@
   .section-head h2 { font-size: clamp(26px, 3.4vw, 34px); letter-spacing: -0.01em; }
   .section-head .lede { margin-top: 14px; font-size: 17px; color: var(--ink-soft); line-height: 1.6; }
 
-  /* ---------- pipeline ---------- */
+  /* ---------- system diagram (architecture) ---------- */
+  .sysdiagram { display: flex; flex-direction: column; align-items: stretch; gap: 0; }
+  .sd-node {
+    background: var(--surface); border: 1.5px solid var(--line); border-radius: 12px;
+    box-shadow: var(--shadow); padding: 16px 22px;
+    display: flex; flex-direction: column; gap: 3px; align-items: center; text-align: center;
+  }
+  .sd-node .sd-tag {
+    font-size: 10px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+    color: var(--ink-faint);
+  }
+  .sd-node .sd-name { font-family: "Fraunces", serif; font-weight: 700; font-size: 17px; }
+  .sd-node .sd-detail { font-size: 13px; color: var(--ink-soft); max-width: 340px; }
+  .sd-node.you { max-width: 220px; margin: 0 auto; }
+  .sd-node.accent { border-color: var(--indigo-line); background: var(--indigo-soft); }
+  .sd-node.accent .sd-name { color: var(--indigo); }
+
+  .sd-arrow {
+    display: flex; align-items: center; justify-content: center; gap: 10px;
+    padding: 14px 0; color: var(--ink-faint); font-size: 13px; position: relative;
+  }
+  .sd-arrow::before {
+    content: ""; position: absolute; left: 50%; top: 0; bottom: 0; width: 3px;
+    transform: translateX(-50%); z-index: 0;
+    background: linear-gradient(to bottom, var(--indigo-line), var(--indigo));
+    border-radius: 3px;
+  }
+  .sd-arrow span:not(.glyph) {
+    position: relative; background: var(--paper); padding: 2px 10px; border-radius: 20px;
+  }
+  .sd-arrow .glyph { font-size: 20px; color: var(--indigo); line-height: 1; position: relative; }
+  .sd-arrow .glyph.rust { color: var(--rust); }
+  .sd-node .sd-why {
+    margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--indigo-line);
+    font-size: 12px; color: var(--ink-faint); max-width: 360px;
+  }
+  .sd-node .sd-why strong { color: var(--rust); font-weight: 700; }
+
+  .sd-branch-wrap { padding-top: 8px; }
+  .sd-branch-bar { border-top: 1.5px solid var(--line); margin: 0 8%; }
+  .sd-branch-row {
+    display: flex; gap: 20px; padding-top: 0;
+  }
+  .sd-branch {
+    flex: 1; display: flex; flex-direction: column; align-items: center; gap: 0;
+  }
+  .sd-branch .sd-stem { width: 1.5px; height: 22px; background: var(--line); }
+  .sd-branch .sd-node { width: 100%; }
+
+  .sd-caption {
+    text-align: center; font-size: 12.5px; color: var(--ink-faint); margin-top: 18px;
+    font-style: italic;
+  }
+
+  /* ---------- pipeline flow diagram (compact) ---------- */
+  .flow-diagram {
+    display: flex; flex-direction: column; gap: 14px; margin-bottom: 12px;
+  }
+  .flow-row {
+    display: flex; flex-wrap: wrap; align-items: stretch; gap: 0; row-gap: 18px;
+  }
+  .flow-node {
+    background: var(--surface); border: 1.5px solid var(--line); border-radius: 10px;
+    box-shadow: var(--shadow); padding: 12px 14px; min-width: 118px; max-width: 150px;
+    display: flex; flex-direction: column; gap: 4px;
+  }
+  .flow-node .fn-step {
+    font-family: "IBM Plex Mono", monospace; font-size: 10px; color: var(--ink-faint);
+  }
+  .flow-node .fn-name { font-size: 13.5px; font-weight: 600; line-height: 1.25; }
+  .flow-node.dashed { border-style: dashed; background: var(--surface-2); }
+  .flow-node.dashed .fn-name { color: var(--ink-soft); }
+  .flow-node .fn-note { font-size: 10.5px; color: var(--ink-faint); font-style: italic; }
+  .flow-connector {
+    display: flex; align-items: center; justify-content: center;
+    width: 30px; flex-shrink: 0; color: var(--indigo); font-size: 18px;
+  }
+  .flow-label {
+    font-family: "IBM Plex Mono", monospace; font-size: 11px; color: var(--ink-faint);
+    letter-spacing: 0.03em; text-transform: uppercase; padding: 2px 0 2px 2px;
+  }
+  @media (max-width: 900px) {
+    .flow-row { flex-direction: column; align-items: flex-start; }
+    .flow-connector { width: auto; height: 22px; transform: rotate(90deg); align-self: flex-start; margin-left: 42px; }
+    .flow-node { max-width: 100%; width: 100%; }
+  }
+
+  /* ---------- pipeline (detailed steps) ---------- */
   .pipeline {
     display: flex; flex-direction: column; gap: 0;
     counter-reset: stage;
@@ -175,16 +280,26 @@
     display: flex; align-items: center; justify-content: center;
     font-family: "Fraunces", serif; font-weight: 700; font-size: 16px; color: var(--indigo);
     box-shadow: var(--shadow);
-  }
-  .stage-num::before { content: counter(stage); }
-  .stage-connector {
     position: relative;
   }
+  .stage-num::before { content: counter(stage); }
   .stage:not(:last-child) .stage-num::after {
     content: ""; position: absolute; left: 50%; top: 44px; bottom: -22px;
-    width: 1.5px; background: var(--line); transform: translateX(-50%);
+    width: 2px; transform: translateX(-50%);
+    background: linear-gradient(to bottom, var(--indigo-line), var(--line) 85%);
   }
   .stage-body h3 { font-size: 19px; margin-bottom: 6px; }
+  .why-card {
+    margin-top: 12px; display: flex; gap: 10px; align-items: flex-start;
+    background: var(--rust-soft); border: 1px solid var(--rust-line); border-radius: 10px;
+    padding: 12px 14px; max-width: 600px;
+  }
+  .why-card .why-mark {
+    font-family: "Fraunces", serif; font-weight: 700; font-size: 13px; color: var(--rust);
+    flex-shrink: 0; margin-top: 1px;
+  }
+  .why-card p { font-size: 13.5px; color: var(--ink-soft); line-height: 1.55; }
+  .why-card p strong { color: var(--ink); font-weight: 600; }
   .stage-body .lane {
     font-size: 10.5px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
     display: inline-block; padding: 2px 9px; border-radius: 20px; margin-bottom: 9px;
@@ -221,21 +336,6 @@
     font-size: 12px; color: var(--ink-faint);
   }
   .block .b-tech code { color: var(--ink-soft); }
-
-  /* ---------- decisions table ---------- */
-  .decisions { display: flex; flex-direction: column; gap: 14px; }
-  .decision {
-    background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
-    padding: 20px 24px; box-shadow: var(--shadow);
-    display: grid; grid-template-columns: 240px 1fr; gap: 24px; align-items: start;
-  }
-  .decision .d-choice { font-family: "Fraunces", serif; font-weight: 600; font-size: 16.5px; }
-  .decision .d-detail p { font-size: 14.5px; color: var(--ink-soft); }
-  .decision .d-detail .not-this {
-    font-size: 13px; color: var(--ink-faint); margin-bottom: 8px;
-  }
-  .decision .d-detail .not-this .x { color: var(--critical); font-weight: 700; margin-right: 4px; }
-  .decision .d-detail .this-instead .check { color: var(--good); font-weight: 700; margin-right: 4px; }
 
   /* ---------- privacy grid ---------- */
   .privacy-grid {
@@ -294,18 +394,21 @@
   footer .f-right { font-size: 12px; color: var(--ink-faint); font-family: "IBM Plex Mono", monospace; }
 
   @media (max-width: 720px) {
-    .decision { grid-template-columns: 1fr; }
     .stage { grid-template-columns: 44px 1fr; }
     .wrap { padding: 0 20px; }
+    .sd-branch-row { flex-direction: column; }
+    .sd-branch-bar { display: none; }
   }
 </style>
+</head>
+<body>
 
 <nav class="toc">
   <div class="wrap">
     <span class="brand">Recruit Assistant</span>
+    <a href="#overview">Overview</a>
     <a href="#journey">The Journey</a>
     <a href="#blocks">Building Blocks</a>
-    <a href="#decisions">Why It's Built This Way</a>
     <a href="#privacy">Privacy</a>
     <a href="#stack">Under the Hood</a>
     <a href="#roadmap">What's Next</a>
@@ -331,6 +434,70 @@
   </div>
 </header>
 
+<section id="overview">
+  <div class="wrap">
+    <div class="section-head">
+      <span class="num">00 — At a Glance</span>
+      <h2>The system, in one diagram</h2>
+      <p class="lede">
+        Three layers. You use a normal web page in your browser; that page talks to one program
+        running on your computer; that program is the only thing that ever touches your data,
+        your files, or the outside world.
+      </p>
+    </div>
+
+    <div class="sysdiagram">
+      <div class="sd-node you">
+        <span class="sd-tag">You, in a browser</span>
+        <span class="sd-name">The Recruit Assistant web page</span>
+        <span class="sd-detail">Jobs, candidates, matches, everything you click and read</span>
+      </div>
+
+      <div class="sd-arrow"><span class="glyph">↓</span><span>asks for / sends data over a local connection</span></div>
+
+      <div class="sd-node accent">
+        <span class="sd-tag">One program on your machine</span>
+        <span class="sd-name">The Recruit Assistant backend</span>
+        <span class="sd-detail">Reads resumes, runs matching, makes every decision described on this page</span>
+        <span class="sd-why"><strong>Why one program?</strong> Splitting into several small services that talk over a network is how a large, team-run platform scales — this runs on one laptop, so that complexity would buy nothing. The code inside is still split into clean modules, so any one piece could become its own service later without a rewrite.</span>
+      </div>
+
+      <div class="sd-branch-wrap">
+        <div class="sd-arrow"><span class="glyph">↓</span><span>and in turn reads from / talks to three kinds of things</span></div>
+        <div class="sd-branch-bar"></div>
+        <div class="sd-branch-row">
+          <div class="sd-branch">
+            <div class="sd-stem"></div>
+            <div class="sd-node">
+              <span class="sd-tag">Always, locally</span>
+              <span class="sd-name">Your own files</span>
+              <span class="sd-detail">A local database + a folder of resumes on your disk — never leaves your machine</span>
+            </div>
+          </div>
+          <div class="sd-branch">
+            <div class="sd-stem"></div>
+            <div class="sd-node">
+              <span class="sd-tag">For scoring</span>
+              <span class="sd-name">An AI provider</span>
+              <span class="sd-detail">OpenRouter first, OpenAI as a fallback — only the resume text needed for that one request is sent</span>
+            </div>
+          </div>
+          <div class="sd-branch">
+            <div class="sd-stem"></div>
+            <div class="sd-node">
+              <span class="sd-tag">Only if you connect one</span>
+              <span class="sd-name">Your email inbox</span>
+              <span class="sd-detail">Gmail or Outlook, read-only — checked for resume attachments, nothing else</span>
+              <span class="sd-why"><strong>Why keychain, not database?</strong> The login token for a connected inbox is handed to your OS's own secure credential store, not saved alongside everything else — so disconnecting an account wipes it completely, with nothing left behind.</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <p class="sd-caption">Nothing in the bottom row talks to anything else in the bottom row — the backend is the only thing that ever coordinates between them.</p>
+    </div>
+  </div>
+</section>
+
 <section id="journey">
   <div class="wrap">
     <div class="section-head">
@@ -342,6 +509,34 @@
         skipped, nothing simplified away. Steps tagged <strong style="color:var(--rust)">you decide</strong>
         are places a human makes the call; everything else runs automatically.
       </p>
+    </div>
+
+    <div class="flow-diagram">
+      <span class="flow-label">Phase 1 — getting a resume on file</span>
+      <div class="flow-row">
+        <div class="flow-node"><span class="fn-step">1</span><span class="fn-name">Arrives</span></div>
+        <div class="flow-connector">→</div>
+        <div class="flow-node"><span class="fn-step">2</span><span class="fn-name">Gets read</span></div>
+        <div class="flow-connector">→</div>
+        <div class="flow-node"><span class="fn-step">3</span><span class="fn-name">Gets understood</span></div>
+        <div class="flow-connector">→</div>
+        <div class="flow-node"><span class="fn-step">4</span><span class="fn-name">Gets recognized</span></div>
+        <div class="flow-connector">→</div>
+        <div class="flow-node"><span class="fn-step">5</span><span class="fn-name">Gets filed</span></div>
+      </div>
+
+      <span class="flow-label" style="margin-top:6px;">Phase 2 — matching it to a job (only when you click "Run matching")</span>
+      <div class="flow-row">
+        <div class="flow-node"><span class="fn-step">6</span><span class="fn-name">You describe the job</span></div>
+        <div class="flow-connector">→</div>
+        <div class="flow-node"><span class="fn-step">7</span><span class="fn-name">Field gets narrowed</span></div>
+        <div class="flow-connector">→</div>
+        <div class="flow-node"><span class="fn-step">8</span><span class="fn-name">Shortlist gets scored</span></div>
+        <div class="flow-connector">→</div>
+        <div class="flow-node dashed"><span class="fn-step">9</span><span class="fn-name">Second opinion</span><span class="fn-note">only scores 40–70</span></div>
+        <div class="flow-connector">→</div>
+        <div class="flow-node"><span class="fn-step">10</span><span class="fn-name">Results shown</span></div>
+      </div>
     </div>
 
     <div class="pipeline">
@@ -360,6 +555,10 @@
             <code>scanning/folder_ingestor.py</code>
             <code>scanning/email_ingestor.py</code>
             <span>— one shared output shape either way (<code>IngestedResume</code>)</span>
+          </div>
+          <div class="why-card">
+            <span class="why-mark">Why</span>
+            <p>The simpler default for an integration like this is to request broad mailbox access "just in case." Instead, a connected mailbox is granted <strong>read-only</strong> permission from the start — the app is structurally incapable of sending or deleting anything, even if something went wrong.</p>
           </div>
         </div>
       </div>
@@ -417,6 +616,10 @@
             <code>scanning/identity_resolution.py</code>
             <span>— the reason someone who applies again six months later, with a stronger resume, stays one person, not two</span>
           </div>
+          <div class="why-card">
+            <span class="why-mark">Why</span>
+            <p>The easy path is to keep email-sourced and folder-sourced resumes as two separate lists, since they arrive through two different doors. That would defeat the point — <strong>a candidate is a person, not a source</strong> — so every resume is checked against everyone already on file before it's ever saved.</p>
+          </div>
         </div>
       </div>
 
@@ -434,6 +637,10 @@
           <div class="tech">
             <code>scanning/mirror_writer.py</code>
             <span>— <code>data/candidates/&lt;date&gt;/&lt;name&gt;/resume.pdf</code> + summary + a local SQLite database</span>
+          </div>
+          <div class="why-card">
+            <span class="why-mark">Why</span>
+            <p>Starting with a cloud database is the modern default for most software — but that would mean your candidates' data lives on someone else's server from day one. Instead, storage sits behind one clean interface: <strong>local now, with a door deliberately left open</strong> for a company server or cloud backend later, as a plug-in, not a rewrite.</p>
           </div>
         </div>
       </div>
@@ -467,6 +674,10 @@
           <div class="tech">
             <code>matching/embeddings.py</code>
             <span>— cosine similarity over the whole pool, computed once per candidate and reused, not recalculated every time</span>
+          </div>
+          <div class="why-card">
+            <span class="why-mark">Why</span>
+            <p>The most thorough-<em>sounding</em> approach is to have the AI carefully read and score every resume in the pool. At real volume that's slow and expensive for no real benefit — most candidates were never going to be close matches. <strong>Match cheaply first, think carefully second</strong> keeps both wait time and AI cost bounded, without losing quality where it actually matters.</p>
           </div>
         </div>
       </div>
@@ -504,6 +715,10 @@
           <div class="tech">
             <code>matching/matcher.py</code>
             <span>— <code>judge_score()</code>, triggered only for scores between 40 and 70</span>
+          </div>
+          <div class="why-card">
+            <span class="why-mark">Why</span>
+            <p>A single AI opinion can be confidently wrong, especially on close calls. Rather than trust one score all the way through, <strong>the same ambiguous middle range a human reviewer would double-check</strong> gets an independent second AI opinion too — cheap insurance, spent only where it's actually needed.</p>
           </div>
         </div>
       </div>
@@ -614,73 +829,10 @@
   </div>
 </section>
 
-<section id="decisions">
-  <div class="wrap">
-    <div class="section-head">
-      <span class="num">03 — Tradeoffs</span>
-      <h2>Why it's built this way</h2>
-      <p class="lede">
-        Every non-obvious choice below had a simpler-looking alternative that was considered
-        and turned down, usually because it solved a problem this app doesn't actually have.
-      </p>
-    </div>
-
-    <div class="decisions">
-      <div class="decision">
-        <div class="d-choice">One program,<br>not many small ones</div>
-        <div class="d-detail">
-          <p class="not-this"><span class="x">✕</span> Splitting into several small services that talk to each other over a network — the way a large, team-run platform often does.</p>
-          <p class="this-instead"><span class="check">✓</span> Everything runs as a single program you start with one command, because it's meant to run on one person's laptop. The internal code is still organized into clean, separate modules — so any one piece could become its own service later if this ever needs to scale up, without a rewrite.</p>
-        </div>
-      </div>
-
-      <div class="decision">
-        <div class="d-choice">Local storage,<br>with a door left open</div>
-        <div class="d-detail">
-          <p class="not-this"><span class="x">✕</span> Starting with a cloud database from day one, since "the cloud" is the default assumption for most modern software.</p>
-          <p class="this-instead"><span class="check">✓</span> Your data — resumes, candidate profiles, everything — lives on your own machine by default, under your control. Storage is built behind one clean interface, so if you ever need a shared company server or cloud backend, that's a new plug-in, not a rewrite of everything that depends on it.</p>
-        </div>
-      </div>
-
-      <div class="decision">
-        <div class="d-choice">Match cheaply first,<br>think carefully second</div>
-        <div class="d-detail">
-          <p class="not-this"><span class="x">✕</span> Having the AI carefully read and score every single resume in the pool for every job — the most thorough-sounding approach.</p>
-          <p class="this-instead"><span class="check">✓</span> A near-instant, inexpensive first pass narrows thousands of resumes down to a real shortlist, and only that shortlist gets the slow, careful AI reading. This keeps both the wait time and the AI usage cost bounded, without giving up quality where it actually matters.</p>
-        </div>
-      </div>
-
-      <div class="decision">
-        <div class="d-choice">One person,<br>one profile — always</div>
-        <div class="d-detail">
-          <p class="not-this"><span class="x">✕</span> Keeping email-sourced and folder-sourced resumes as two separate lists, since they arrive through two different paths.</p>
-          <p class="this-instead"><span class="check">✓</span> Every incoming resume is checked against everyone already on file, by email or by name-and-phone, before it's saved. Someone who applies again months later with an updated resume stays one person with an updated history — not a confusing duplicate entry.</p>
-        </div>
-      </div>
-
-      <div class="decision">
-        <div class="d-choice">Email access is<br>read-only, always</div>
-        <div class="d-detail">
-          <p class="not-this"><span class="x">✕</span> Requesting broad mailbox permissions "just in case," which is the path of least resistance when setting up an integration.</p>
-          <p class="this-instead"><span class="check">✓</span> Connecting a mailbox only ever grants permission to <em>read</em> messages looking for attachments — never to send, delete, or modify anything. Even if something went wrong, the app is structurally incapable of sending an email on your behalf.</p>
-        </div>
-      </div>
-
-      <div class="decision">
-        <div class="d-choice">Credentials live in<br>your computer's own lock, not ours</div>
-        <div class="d-detail">
-          <p class="not-this"><span class="x">✕</span> Saving the login token for a connected email account in the app's own database, alongside everything else, for simplicity.</p>
-          <p class="this-instead"><span class="check">✓</span> That token is handed to your operating system's own secure credential store — the same one macOS/Windows uses for saved Wi-Fi passwords — and only a reference to it is kept in the app's database. Disconnecting an account also wipes it from that secure store, with nothing left behind.</p>
-        </div>
-      </div>
-    </div>
-  </div>
-</section>
-
 <section id="privacy">
   <div class="wrap">
     <div class="section-head">
-      <span class="num">04 — Trust</span>
+      <span class="num">03 — Trust</span>
       <h2>Privacy, in plain terms</h2>
       <p class="lede">
         This handles real people's names, contact details, and work history, so the safeguards
@@ -726,7 +878,7 @@
 <section id="stack">
   <div class="wrap">
     <div class="section-head">
-      <span class="num">05 — Reference</span>
+      <span class="num">04 — Reference</span>
       <h2>Under the hood</h2>
       <p class="lede">For the more technically curious — the actual tools this is built with, and how the code is laid out.</p>
     </div>
@@ -771,7 +923,7 @@
 <section id="roadmap">
   <div class="wrap">
     <div class="section-head">
-      <span class="num">06 — Status</span>
+      <span class="num">05 — Status</span>
       <h2>What's done, what's next</h2>
     </div>
 
@@ -814,3 +966,6 @@
     <span class="f-right">local-first · built to run on one laptop</span>
   </div>
 </footer>
+
+</body>
+</html>
