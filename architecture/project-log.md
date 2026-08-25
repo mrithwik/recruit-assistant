@@ -393,8 +393,8 @@ works with the fix in place.
 
 ## 15. Hardening plan, Stage 1 — performance (concurrency + vectorized similarity + real pagination)
 
-First stage of the hardening plan (see `.claude/plans` at the time, and the research pass that
-preceded it): four confirmed performance gaps, all fixed.
+First stage of the hardening plan, following a research pass across the codebase: four
+confirmed performance gaps, all fixed.
 
 **Sequential LLM calls in matching and ingest.** `matcher.py`'s deep-scoring and judge passes,
 and `ingest_service.py`'s per-candidate embedding, each awaited one LLM call at a time in a
