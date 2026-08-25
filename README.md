@@ -71,3 +71,8 @@ make build-frontend     # production frontend build
 make lint               # ruff
 make clean              # remove caches/build artifacts
 ```
+
+## License
+
+All rights reserved — see [LICENSE](LICENSE). See also [SECURITY.md](SECURITY.md) for how
+candidate data and credentials are handled.
