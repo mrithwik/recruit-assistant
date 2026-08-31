@@ -185,6 +185,55 @@ def test_needs_attention_kpi_counts_each_match_once(storage):
     assert summary.red_flagged_count == 2
 
 
+def test_needs_attention_kpi_counts_candidates_not_matches(storage):
+    """A candidate red-flagged on two different jobs is one person needing
+    attention, not two — the KPI must agree with storage.candidates_page's
+    needs_attention filter (distinct candidates), which is what the tile
+    links to. Counting matches instead let the tile disagree with its own
+    linked page (QA: tile showed 103, the filtered list showed 97)."""
+    with storage.session() as session:
+        job1 = Job(id=str(uuid.uuid4()), title="Backend Engineer", raw_text="Python")
+        job2 = Job(id=str(uuid.uuid4()), title="Platform Engineer", raw_text="Go")
+        session.add_all([job1, job2])
+        candidate = Candidate(
+            id=str(uuid.uuid4()),
+            identity_fingerprint="email:dual@example.com",
+            date_submitted=datetime.utcnow(),
+        )
+        session.add(candidate)
+        session.add_all(
+            [
+                Match(
+                    id=str(uuid.uuid4()),
+                    job_id=job1.id,
+                    candidate_id=candidate.id,
+                    score=20,
+                    tier="red_flagged",
+                    reasons={"matched": [], "gaps": []},
+                    missing_info=[],
+                    flags=[],
+                    matched_at=datetime.utcnow(),
+                ),
+                Match(
+                    id=str(uuid.uuid4()),
+                    job_id=job2.id,
+                    candidate_id=candidate.id,
+                    score=25,
+                    tier="red_flagged",
+                    reasons={"matched": [], "gaps": []},
+                    missing_info=[],
+                    flags=[],
+                    matched_at=datetime.utcnow(),
+                ),
+            ]
+        )
+        session.commit()
+
+        summary = build_dashboard_summary(session)
+
+    assert summary.kpis.needs_attention == 1
+
+
 def test_recent_activity_shows_one_ingest_scan_summary_not_per_candidate_rows(storage):
     # A single scan can add hundreds of candidates at once — recent_activity
     # must surface one summary row for the scan (see IngestScanHistoryEntry),

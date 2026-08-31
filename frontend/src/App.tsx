@@ -17,6 +17,7 @@ import { CriteriaPage } from "./pages/criteria-page";
 import { HistoryPage } from "./pages/history-page";
 import { ScanLogsPage } from "./pages/scan-logs-page";
 import { ScreeningSourcesPage } from "./pages/screening-sources-page";
+import { NotFoundPage } from "./pages/not-found-page";
 
 export default function App() {
   const checkAuthStatus = useAuthStore((s) => s.checkAuthStatus);
@@ -49,11 +50,14 @@ export default function App() {
                 <Route path="criteria" element={<CriteriaPage />} />
                 <Route path="history" element={<HistoryPage />} />
                 <Route path="screening-sources" element={<ScreeningSourcesPage />} />
+                <Route path="*" element={<NotFoundPage homeTo="/app/dashboard" homeLabel="Go to dashboard" />} />
               </Routes>
             </AppShell>
           </RequireAuth>
         }
       />
+
+      <Route path="*" element={<NotFoundPage homeTo="/" homeLabel="Go to homepage" />} />
     </Routes>
   );
 }

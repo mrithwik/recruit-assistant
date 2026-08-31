@@ -267,6 +267,13 @@ export function ResultsPage() {
   );
   const pageStart = sortedMatches.length === 0 ? 0 : (page - 1) * RESULTS_PAGE_SIZE + 1;
   const pageEnd = Math.min(page * RESULTS_PAGE_SIZE, sortedMatches.length);
+  // expandedIds accumulates whichever page's cards were last expanded and
+  // isn't cleared on paging (so paging back preserves what you had open) —
+  // "all expanded" has to be judged against the CURRENT page's cards, not
+  // the set's size, or the button's label goes stale the moment you page
+  // to a set of cards that were never toggled (QA: said "Collapse all" on
+  // a page that was entirely collapsed).
+  const allPageExpanded = pageMatches.length > 0 && pageMatches.every((m) => expandedIds.has(m.id));
 
   useEffect(() => {
     setPage(1);
@@ -429,12 +436,12 @@ export function ResultsPage() {
           {matches.length > 1 && (
             <button
               onClick={() =>
-                setExpandedIds(expandedIds.size > 0 ? new Set() : new Set(pageMatches.map((m) => m.id)))
+                setExpandedIds(allPageExpanded ? new Set() : new Set(pageMatches.map((m) => m.id)))
               }
               className="flex items-center gap-1 text-xs font-medium text-zinc-500 hover:text-indigo-600 dark:text-zinc-400 dark:hover:text-indigo-400"
             >
-              {expandedIds.size > 0 ? <ChevronsDownUp size={13} /> : <ChevronsUpDown size={13} />}
-              {expandedIds.size > 0 ? "Collapse all" : "Expand all"}
+              {allPageExpanded ? <ChevronsDownUp size={13} /> : <ChevronsUpDown size={13} />}
+              {allPageExpanded ? "Collapse all" : "Expand all"}
             </button>
           )}
         </div>

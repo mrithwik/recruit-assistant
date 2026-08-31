@@ -253,11 +253,23 @@ export function AllCandidatesPage() {
         )}
       </div>
 
-      {!loading && total === 0 && !query && !hasAnyFilters && (
+      {!loading && total === 0 && !query && !hasAnyFilters && dataMode === "all" && (
         <EmptyState
           icon={<Users size={20} />}
           title="No candidates yet"
           description="Scan a local folder or connected mailbox from Scan Sources to build the pool."
+        />
+      )}
+
+      {/* Zero results under a "Real" or "Mock" data-mode scope isn't the
+          same situation as an empty pool — sources are connected and
+          scanned, the header toggle is just excluding everything currently
+          in it. Pointing back at Scan Sources here was misleading (QA). */}
+      {!loading && total === 0 && !query && !hasAnyFilters && dataMode !== "all" && (
+        <EmptyState
+          icon={<Users size={20} />}
+          title={`No ${dataMode} candidates right now`}
+          description={`The pool may still have candidates in the other scope — switch the "${dataMode === "real" ? "Real" : "Mock"}" toggle in the header back to "All" to see everything.`}
         />
       )}
 

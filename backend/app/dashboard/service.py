@@ -47,19 +47,23 @@ def _kpis(session: Session, data_mode: str) -> tuple[DashboardKPIs, int]:
 
     match_condition = candidate_id_condition(Match.candidate_id, data_mode)
     matches_stmt = select(func.count()).select_from(Match)
-    attention_stmt = select(Match.tier, Match.missing_info)
+    attention_stmt = select(Match.candidate_id, Match.tier, Match.missing_info)
     if match_condition is not None:
         matches_stmt = matches_stmt.where(match_condition)
         attention_stmt = attention_stmt.where(match_condition)
     matches_scored = session.execute(matches_stmt).scalar_one()
 
-    # A single match can be both red-flagged AND missing info — summing two
-    # separate counts double-counted it, so the KPI tile could show a bigger
-    # number than the "Needs attention" list below ever could (that list
-    # counts each match once, on the `or`). Count matches once instead.
     attention_rows = session.execute(attention_stmt).all()
-    red_flagged = sum(1 for tier, _ in attention_rows if tier == MatchTier.RED_FLAG.value)
-    needs_attention = sum(1 for tier, missing_info in attention_rows if tier == MatchTier.RED_FLAG.value or missing_info)
+    red_flagged = sum(1 for _, tier, _ in attention_rows if tier == MatchTier.RED_FLAG.value)
+    # Counts distinct candidates, not matches — this is the same "needs
+    # attention" definition the KPI tile links to (storage.candidates_page's
+    # needs_attention filter, see _missing_info_breakdown above). Counting
+    # matches instead double-counted a candidate matched against several
+    # jobs, which is what made the tile disagree with the filtered list it
+    # links to (103 matches vs. 97 actual candidates).
+    needs_attention = len(
+        {candidate_id for candidate_id, tier, missing_info in attention_rows if tier == MatchTier.RED_FLAG.value or missing_info}
+    )
 
     connected_mailboxes = session.execute(select(func.count()).select_from(EmailAccount)).scalar_one()
     connected_folders = session.execute(
