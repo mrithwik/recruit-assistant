@@ -21,7 +21,6 @@ import { InflowChart } from "../components/dashboard/inflow-chart";
 import { TierChart } from "../components/dashboard/tier-chart";
 import { RankedBarChart } from "../components/dashboard/ranked-bar-chart";
 import { JobsSnapshotList } from "../components/dashboard/jobs-snapshot-list";
-import { AttentionList } from "../components/dashboard/attention-list";
 import { ActivityFeed } from "../components/dashboard/activity-feed";
 import { PendingUpdatesBanner } from "../components/dashboard/pending-updates-banner";
 import { Button } from "../components/ui/button";
@@ -44,12 +43,8 @@ export function DashboardPage() {
   }, [dataMode]);
 
   useEffect(() => {
-    // The "Needs attention" tile links here with a hash instead of off to
-    // another page — that section already has the real, actionable list
-    // with links straight to each candidate, so jumping away from the
-    // dashboard just to see it (its old behavior) wasn't adding anything.
-    if (location.hash === "#needs-attention") {
-      document.getElementById("needs-attention")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    if (location.hash === "#recent-activity") {
+      document.getElementById(location.hash.slice(1))?.scrollIntoView({ behavior: "smooth", block: "start" });
     }
   }, [location.hash, summary]);
 
@@ -138,7 +133,7 @@ export function DashboardPage() {
               value={summary.kpis.needs_attention}
               icon={AlertTriangle}
               tone={summary.kpis.needs_attention > 0 ? "attention" : "default"}
-              to="/app/dashboard#needs-attention"
+              to="/app/candidates?needs_attention=true"
             />
             <StatTile label="Connected sources" value={summary.kpis.connected_sources} icon={Plug} to="/app/scan" />
           </div>
@@ -183,12 +178,26 @@ export function DashboardPage() {
               <JobsSnapshotList jobs={summary.jobs_snapshot} />
             </SectionCard>
 
-            <SectionCard id="needs-attention" title="Needs attention" subtitle="Red flags and incomplete profiles">
-              <AttentionList items={summary.needs_attention} />
+            <SectionCard
+              title="Missing information"
+              subtitle={
+                <>
+                  Candidates missing each kind of info —{" "}
+                  <Link to="/app/candidates?needs_attention=true" className="text-indigo-600 hover:underline dark:text-indigo-400">
+                    view all needing attention
+                  </Link>
+                </>
+              }
+            >
+              {summary.missing_info_breakdown.length > 0 ? (
+                <RankedBarChart data={summary.missing_info_breakdown} />
+              ) : (
+                <p className="py-8 text-center text-sm text-zinc-400">Nothing missing — every match has complete info.</p>
+              )}
             </SectionCard>
           </div>
 
-          <SectionCard title="Recent activity" subtitle="Latest scans and candidates">
+          <SectionCard id="recent-activity" title="Recent activity" subtitle="Latest scans and candidates">
             <ActivityFeed items={summary.recent_activity} />
           </SectionCard>
         </div>

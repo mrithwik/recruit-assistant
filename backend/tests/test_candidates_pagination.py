@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 
 from sqlalchemy import select
 
-from app.models.db import Candidate, ResumeSource
+from app.models.db import Candidate, Job, Match, ResumeSource
 from app.routes.candidates import _batch_email_links
 
 
@@ -66,6 +66,55 @@ def _seed(storage):
             session.add(candidate)
             session.add(source)
         session.commit()
+
+
+def test_needs_attention_filter_matches_red_flag_or_missing_info(storage):
+    _seed(storage)
+    with storage.session() as session:
+        candidates = {c.email: c.id for c in session.execute(select(Candidate)).scalars()}
+        job = Job(id=str(uuid.uuid4()), title="Engineer", raw_text="...")
+        session.add(job)
+        session.add(
+            Match(
+                id=str(uuid.uuid4()),
+                job_id=job.id,
+                candidate_id=candidates["ada@example.com"],
+                score=10.0,
+                tier="red_flagged",
+            )
+        )
+        session.add(
+            Match(
+                id=str(uuid.uuid4()),
+                job_id=job.id,
+                candidate_id=candidates["grace@example.com"],
+                score=70.0,
+                tier="good_match",
+                missing_info=["work authorization"],
+            )
+        )
+        session.add(
+            Match(
+                id=str(uuid.uuid4()),
+                job_id=job.id,
+                candidate_id=candidates["alan@example.com"],
+                score=90.0,
+                tier="great_match",
+            )
+        )
+        session.commit()
+
+    with storage.session() as session:
+        results, total = storage.candidates_page(
+            session, None, None, None, None, "recent", limit=10, offset=0, needs_attention=True
+        )
+        assert total == 2
+        assert {c.email for c in results} == {"ada@example.com", "grace@example.com"}
+
+        unfiltered, unfiltered_total = storage.candidates_page(
+            session, None, None, None, None, "recent", limit=10, offset=0, needs_attention=False
+        )
+        assert unfiltered_total == 3
 
 
 def test_pagination_limit_and_offset(storage):

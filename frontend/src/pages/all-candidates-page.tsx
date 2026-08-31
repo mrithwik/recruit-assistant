@@ -1,6 +1,6 @@
 import { useEffect } from "react";
-import { useNavigate } from "react-router-dom";
-import { ListFilter, Mail, RefreshCw, Search, Users, X } from "lucide-react";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import { AlertTriangle, ListFilter, Mail, RefreshCw, Search, Users, X } from "lucide-react";
 import { useCandidatesStore, CANDIDATES_PAGE_SIZE } from "../stores/candidates-store";
 import { useToastStore } from "../stores/toast-store";
 import { useDataModeStore } from "../stores/data-mode-store";
@@ -15,6 +15,7 @@ import { TimingBadge } from "../components/ui/timing-badge";
 import { MultiSelectFilter } from "../components/ui/multi-select-filter";
 import { ExperienceRangeFilter } from "../components/ui/experience-range-filter";
 import { ProgressBar, useSimulatedProgress } from "../components/ui/progress-bar";
+import { CancelJobButton } from "../components/ui/cancel-job-button";
 import type { Candidate } from "../lib/types";
 
 const RESCAN_ALL_ESTIMATED_SECONDS = 45;
@@ -48,6 +49,7 @@ export function AllCandidatesPage() {
     workVisaStatuses,
     experienceMin,
     experienceMax,
+    needsAttention,
     facets,
     fetchCandidates,
     fetchFacets,
@@ -58,14 +60,17 @@ export function AllCandidatesPage() {
     toggleEmploymentStatus,
     toggleWorkVisaStatus,
     setExperienceRange,
+    setNeedsAttention,
     clearAdvancedFilters,
     rescanAll,
+    cancelRescanAll,
     rescanningAll,
     rescanAllProgress,
     resumeRescanAllIfAny,
   } = useCandidatesStore();
   const push = useToastStore((s) => s.push);
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const dataMode = useDataModeStore((s) => s.dataMode);
   const { pct: rescanPct, remainingSeconds: rescanRemaining, overrun: rescanOverrun } = useSimulatedProgress(
     RESCAN_ALL_ESTIMATED_SECONDS,
@@ -87,8 +92,15 @@ export function AllCandidatesPage() {
   // Also covers the initial load. The global "All / Real / Mock" toggle
   // (header) changes what counts as "the pool" — re-fetch immediately
   // rather than waiting for the next manual "Apply filters" click, since
-  // switching data sets is its own deliberate action already.
+  // switching data sets is its own deliberate action already. Arriving via
+  // a "needs attention" link (Dashboard's KPI tile / chart) is an explicit
+  // request to see that filtered view, so it's applied here — before the
+  // one fetch this effect makes — rather than firing a second, racing
+  // fetch afterward.
   useEffect(() => {
+    if (searchParams.get("needs_attention") === "true") {
+      setNeedsAttention(true);
+    }
     fetchFacets().catch((e) => push(String(e), "error"));
     setPage(1);
     fetchCandidates().catch((e) => push(String(e), "error"));
@@ -100,6 +112,16 @@ export function AllCandidatesPage() {
 
   function applyFilters() {
     setPage(1);
+    fetchCandidates().catch((e) => push(String(e), "error"));
+  }
+
+  // Unlike the staged multi-select filters below (skills/status/visa/
+  // experience — picked, then applied together via "Apply filters"),
+  // "Needs attention" is a single on/off toggle a recruiter reaches for to
+  // jump straight to red-flagged or incomplete profiles — it applies the
+  // moment it's clicked rather than waiting for a second click.
+  function toggleNeedsAttention() {
+    setNeedsAttention(!needsAttention);
     fetchCandidates().catch((e) => push(String(e), "error"));
   }
 
@@ -116,6 +138,7 @@ export function AllCandidatesPage() {
   const totalPages = Math.max(1, Math.ceil(total / CANDIDATES_PAGE_SIZE));
   const hasAdvancedFilters =
     skills.length > 0 || employmentStatuses.length > 0 || workVisaStatuses.length > 0 || experienceMin !== undefined || experienceMax !== undefined;
+  const hasAnyFilters = hasAdvancedFilters || needsAttention;
 
   return (
     <div className="mx-auto max-w-4xl">
@@ -150,13 +173,18 @@ export function AllCandidatesPage() {
             remainingSeconds={rescanRemaining}
             overrun={rescanOverrun}
           />
-          {rescanAllProgress && (
-            <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-              {rescanAllProgress.resumes_found} resume(s) processed — {rescanAllProgress.candidates_created} new,{" "}
-              {rescanAllProgress.candidates_updated} updated, {rescanAllProgress.duplicates_skipped} unchanged
-              {rescanAllProgress.errors.length > 0 && `, ${rescanAllProgress.errors.length} error(s)`}
-            </p>
-          )}
+          <div className="mt-1 flex items-center justify-between">
+            {rescanAllProgress ? (
+              <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                {rescanAllProgress.resumes_found} resume(s) processed — {rescanAllProgress.candidates_created} new,{" "}
+                {rescanAllProgress.candidates_updated} updated, {rescanAllProgress.duplicates_skipped} unchanged
+                {rescanAllProgress.errors.length > 0 && `, ${rescanAllProgress.errors.length} error(s)`}
+              </p>
+            ) : (
+              <span />
+            )}
+            <CancelJobButton onCancel={cancelRescanAll} />
+          </div>
         </div>
       )}
 
@@ -172,6 +200,18 @@ export function AllCandidatesPage() {
           />
         </div>
         <SortSelect value={sort as SortKey} onChange={changeSort} options={SORT_OPTIONS} />
+        <button
+          type="button"
+          onClick={toggleNeedsAttention}
+          title="Red-flagged, or missing required info, on at least one job"
+          className={`flex shrink-0 items-center gap-1.5 rounded-lg border px-3 py-2 text-sm font-medium transition-colors ${
+            needsAttention
+              ? "border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-700 dark:bg-amber-500/10 dark:text-amber-400"
+              : "border-zinc-200 bg-white text-zinc-600 hover:border-amber-300 hover:text-amber-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:border-amber-700 dark:hover:text-amber-400"
+          }`}
+        >
+          <AlertTriangle size={13} /> Needs attention
+        </button>
       </div>
 
       <div className="mb-4 flex flex-wrap items-center gap-2">
@@ -199,7 +239,7 @@ export function AllCandidatesPage() {
         <Button size="sm" icon={<ListFilter size={13} />} loading={loading} onClick={applyFilters}>
           Apply filters
         </Button>
-        {hasAdvancedFilters && (
+        {hasAnyFilters && (
           <button
             type="button"
             onClick={() => {
@@ -213,7 +253,7 @@ export function AllCandidatesPage() {
         )}
       </div>
 
-      {!loading && total === 0 && !query && !hasAdvancedFilters && (
+      {!loading && total === 0 && !query && !hasAnyFilters && (
         <EmptyState
           icon={<Users size={20} />}
           title="No candidates yet"
@@ -221,9 +261,13 @@ export function AllCandidatesPage() {
         />
       )}
 
-      {!loading && total === 0 && (query || hasAdvancedFilters) && (
+      {!loading && total === 0 && (query || hasAnyFilters) && (
         <p className="py-8 text-center text-sm text-zinc-400">
-          {query ? `No candidates match "${query}".` : "No candidates match the current filters."}
+          {query
+            ? `No candidates match "${query}".`
+            : needsAttention && !hasAdvancedFilters
+              ? "No candidates currently need attention — nothing red-flagged or missing info."
+              : "No candidates match the current filters."}
         </p>
       )}
 

@@ -106,6 +106,7 @@ def list_candidates(
     experience_min: float | None = Query(None, ge=0),
     experience_max: float | None = Query(None, ge=0),
     data_mode: str = Query("all", description="'all', 'real', or 'mock' — see /candidates/facets"),
+    needs_attention: bool = Query(False, description="only candidates with a red-flagged or missing-info match, any job"),
     storage: BaseStorageBackend = Depends(get_storage),
 ):
     start_time = time.monotonic()
@@ -125,6 +126,7 @@ def list_candidates(
             experience_min=experience_min,
             experience_max=experience_max,
             data_mode=data_mode,
+            needs_attention=needs_attention,
         )
         candidate_ids = [c.id for c in candidates]
         origins_by_candidate = _batch_origins(session, candidate_ids)

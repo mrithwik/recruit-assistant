@@ -10,7 +10,7 @@ export function SectionCard({
   id,
 }: {
   title: string;
-  subtitle?: string;
+  subtitle?: ReactNode;
   action?: ReactNode;
   children: ReactNode;
   className?: string;
