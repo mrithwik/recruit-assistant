@@ -107,7 +107,7 @@ export function JobScanMatchPanel({ jobId }: { jobId: string }) {
         >
           Run
         </Button>
-        <Link to="/app/results" className="text-xs font-medium text-indigo-600 hover:underline dark:text-indigo-400">
+        <Link to={`/app/results?job=${jobId}`} className="text-xs font-medium text-indigo-600 hover:underline dark:text-indigo-400">
           View results →
         </Link>
       </div>

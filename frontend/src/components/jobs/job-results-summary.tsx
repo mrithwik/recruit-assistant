@@ -1,8 +1,11 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { ArrowRight, Users } from "lucide-react";
+import { ArrowRight, Sparkles, Users } from "lucide-react";
 import { api } from "../../lib/api";
+import { useMatchesStore } from "../../stores/matches-store";
+import { useToastStore } from "../../stores/toast-store";
 import { MatchBadge } from "../ui/match-badge";
+import { ProgressBar, useSimulatedProgress } from "../ui/progress-bar";
 import type { JobMatchSummary } from "../../lib/types";
 
 // Requirement: a recruiter running matches for several jobs was losing
@@ -14,6 +17,35 @@ export function JobResultsSummary({ jobId }: { jobId: string }) {
   const [summary, setSummary] = useState<JobMatchSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
+  const push = useToastStore((s) => s.push);
+  const {
+    rescanMatched,
+    rescanningMatched,
+    rescanMatchedProgress,
+    activeRescanForJobId,
+  } = useMatchesStore();
+  const thisJobRescanning = rescanningMatched && activeRescanForJobId === jobId;
+  const otherJobRescanning = rescanningMatched && activeRescanForJobId !== jobId;
+  const { pct: rescanPct, remainingSeconds: rescanRemaining, overrun: rescanOverrun } = useSimulatedProgress(
+    Math.max(10, (summary?.total_matches ?? 1) * 3),
+    thisJobRescanning,
+  );
+
+  function refetchSummary() {
+    api
+      .getMatchSummary(jobId)
+      .then((s) => setSummary(s))
+      .catch(() => {});
+  }
+
+  async function handleUpdateMatched() {
+    try {
+      await rescanMatched(jobId);
+      refetchSummary();
+    } catch (e) {
+      push(String(e), "error");
+    }
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -53,13 +85,41 @@ export function JobResultsSummary({ jobId }: { jobId: string }) {
             </span>
           )}
         </p>
-        <button
-          onClick={() => navigate(`/app/results?job=${jobId}`)}
-          className="flex items-center gap-1 text-xs font-medium text-indigo-600 hover:underline dark:text-indigo-400"
-        >
-          View full results <ArrowRight size={11} />
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={handleUpdateMatched}
+            disabled={rescanningMatched}
+            title="Re-check only this job's matched candidates for updates — faster than a full rescan"
+            className="flex items-center gap-1 text-xs font-medium text-indigo-600 hover:underline disabled:cursor-not-allowed disabled:opacity-50 dark:text-indigo-400"
+          >
+            <Sparkles size={11} /> {thisJobRescanning ? "Updating…" : "Update matched"}
+          </button>
+          <button
+            onClick={() => navigate(`/app/results?job=${jobId}`)}
+            className="flex items-center gap-1 text-xs font-medium text-indigo-600 hover:underline dark:text-indigo-400"
+          >
+            View full results <ArrowRight size={11} />
+          </button>
+        </div>
       </div>
+      {thisJobRescanning && (
+        <div className="mb-2">
+          <ProgressBar
+            pct={rescanPct}
+            label="Checking matched candidates for updates…"
+            remainingSeconds={rescanRemaining}
+            overrun={rescanOverrun}
+          />
+          {rescanMatchedProgress && (
+            <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+              {rescanMatchedProgress.resumes_found} checked — {rescanMatchedProgress.candidates_updated} updated so far
+            </p>
+          )}
+        </div>
+      )}
+      {otherJobRescanning && (
+        <p className="mb-2 text-xs text-zinc-400">Another job's update is in progress — try again once it finishes.</p>
+      )}
       <ul className="flex flex-col gap-1.5">
         {summary.top_candidates.map((c) => (
           <li key={c.match_id} className="flex items-center justify-between gap-2 text-sm">

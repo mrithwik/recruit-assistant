@@ -79,6 +79,12 @@ export function JobsPage() {
   // doesn't need the job_registry survive-refresh treatment those get.
   const [bulkMatching, setBulkMatching] = useState(false);
   const [bulkProgress, setBulkProgress] = useState<{ done: number; total: number } | null>(null);
+  // "Update matched candidates" bulk action — same sequential-loop pattern
+  // as matchJobs above, but calling the bounded rescan-matched endpoint per
+  // job instead of a full match run. Jobs with no matches yet are skipped
+  // (there's nothing to rescan) rather than surfaced as failures.
+  const [bulkUpdating, setBulkUpdating] = useState(false);
+  const [bulkUpdateProgress, setBulkUpdateProgress] = useState<{ done: number; total: number } | null>(null);
 
   useEffect(() => {
     fetchJobs().catch((e) => push(String(e), "error"));
@@ -209,6 +215,41 @@ export function JobsPage() {
     }
   }
 
+  async function updateMatchedForJobs(jobIds: string[]) {
+    if (jobIds.length === 0) return;
+    setBulkUpdating(true);
+    setBulkUpdateProgress({ done: 0, total: jobIds.length });
+    let updatedCount = 0;
+    let skipped = 0;
+    const failures: string[] = [];
+    try {
+      for (let i = 0; i < jobIds.length; i++) {
+        try {
+          await useMatchesStore.getState().rescanMatched(jobIds[i]);
+          updatedCount += 1;
+        } catch (e) {
+          const msg = String(e);
+          if (msg.includes("No matches yet")) {
+            skipped += 1;
+          } else {
+            const job = jobs.find((j) => j.id === jobIds[i]);
+            failures.push(job?.title ?? jobIds[i]);
+          }
+        }
+        setBulkUpdateProgress({ done: i + 1, total: jobIds.length });
+      }
+      push(
+        `Checked matched candidates for ${updatedCount} job(s)` +
+          (skipped ? `, skipped ${skipped} with no matches yet` : "") +
+          (failures.length ? `. Failed: ${failures.join(", ")}` : ""),
+        failures.length ? "error" : "success",
+      );
+    } finally {
+      setBulkUpdating(false);
+      setBulkUpdateProgress(null);
+    }
+  }
+
   return (
     <div className="mx-auto max-w-3xl">
       <PageHeader
@@ -266,6 +307,18 @@ export function JobsPage() {
             Match all ({filtered.length})
           </Button>
         )}
+        {filtered.length > 1 && (
+          <Button
+            variant="secondary"
+            size="md"
+            icon={<Sparkles size={14} />}
+            loading={bulkUpdating}
+            onClick={() => updateMatchedForJobs(filtered.map((j) => j.id))}
+            title="Checks already-matched candidates for updates, for every job currently shown"
+          >
+            Update matched ({filtered.length})
+          </Button>
+        )}
         <Button icon={<Plus size={15} />} onClick={() => setAdding(true)}>
           Add job description
         </Button>
@@ -276,6 +329,15 @@ export function JobsPage() {
           <ProgressBar
             pct={Math.round((bulkProgress.done / bulkProgress.total) * 100)}
             label={`Matching job ${bulkProgress.done} of ${bulkProgress.total}…`}
+          />
+        </div>
+      )}
+
+      {bulkUpdating && bulkUpdateProgress && (
+        <div className="mb-4">
+          <ProgressBar
+            pct={Math.round((bulkUpdateProgress.done / bulkUpdateProgress.total) * 100)}
+            label={`Checking job ${bulkUpdateProgress.done} of ${bulkUpdateProgress.total} for updates…`}
           />
         </div>
       )}
@@ -335,6 +397,13 @@ export function JobsPage() {
                   className="flex items-center gap-1 font-medium text-indigo-600 hover:underline disabled:cursor-not-allowed disabled:opacity-50 dark:text-indigo-400"
                 >
                   <Play size={13} /> Match selected
+                </button>
+                <button
+                  onClick={() => updateMatchedForJobs(Array.from(selectedIds))}
+                  disabled={bulkUpdating}
+                  className="flex items-center gap-1 font-medium text-indigo-600 hover:underline disabled:cursor-not-allowed disabled:opacity-50 dark:text-indigo-400"
+                >
+                  <Sparkles size={13} /> Update selected
                 </button>
                 <button onClick={() => setSelectedIds(new Set())} className="text-zinc-500 hover:underline dark:text-zinc-400">
                   Clear
