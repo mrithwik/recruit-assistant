@@ -929,6 +929,69 @@ losing all progress, so the job-registry treatment wasn't worth the added comple
 **Rename:** "Candidate Results" → "Match Results" throughout the UI, per user feedback that
 the old name was confusing.
 
+## 33. Job-results link bug, per-job update actions, two real chart/count bugs, and the All/Real/Mock data-mode toggle
+
+**Job Descriptions' "View results" link lost the job.** `job-scan-match-panel.tsx`'s link
+pointed at `/app/results` with no `job` query param, so Match Results just showed whatever
+job's matches were last persisted in `matches-store`, not the job the user actually clicked
+from — reported as "the displayed match results don't correspond to the relevant job
+description." Fixed to carry `?job={jobId}`, matching the pattern `job-results-summary.tsx`'s
+own link already used correctly.
+
+**Per-job and bulk "update matched candidates."** Extended the existing per-job
+rescan-matched endpoint (section 31) onto the Jobs page itself, not just Match Results: each
+job card's results summary gained an "Update matched" action with its own progress bar
+(`job-results-summary.tsx`), and the toolbar/selection bar gained "Update matched (N)" /
+"Update selected" bulk actions (`jobs-page.tsx`) — same sequential-loop pattern as the
+existing "Match all," skipping jobs with no matches yet rather than treating that as a
+failure.
+
+**The maintenance pending-count bug.** Running "Backfill email links" reported "0 updated,
+14,115 skipped" and looked broken. It wasn't — checking the live database directly showed all
+624 real Gmail-sourced candidates already had their link (filled at ingest time), and every
+one of the 14,115 unlinked rows was `mock-demo-mailbox:`-prefixed sample/test data with no
+real inbox message to link to. The real bug: `_email_link_pending_count`
+(`app/maintenance/tasks.py`) counted those unresolvable rows as "pending" too, so the
+Dashboard's "Updates available" banner would show ~14,115 forever and every future run would
+report the same "0 updated" result permanently, looking perpetually broken. Fixed to only
+count rows with a real, currently-connected account behind them (same resolution logic the
+backfill itself already used to decide what it could touch).
+
+**Inflow chart rendering all-email data with the folder color.** The Dashboard's stacked
+area chart (`inflow-chart.tsx`) stacks `email` then `folder`; with zero folder-origin data,
+folder's series is flat at 0 everywhere, but its 2px stroke line still rendered on top of the
+email area's boundary (drawn second = higher z-order), visually overwriting the chart's edge
+with the folder color even though it contributed nothing — an entirely email-sourced dataset
+rendered as if it were the folder series' orange/red instead of email's blue. General fix, not
+a one-off: only render a stacked series's `<Area>` when it actually has nonzero data in the
+displayed window, so a flat-zero series can never visually dominate.
+
+**The All/Real/Mock data-mode toggle.** A recruiter who loaded a large generated sample
+dataset for testing (section reference: the sample-data generator, `reference` doc) had no
+way to view or work with just their real, actually-scanned candidates separately from the
+sample set, short of deleting one. New `app/data_classification.py` classifies a
+`ResumeSource` as mock/sample without any join: `MockEmailIngestor` always writes the fixed
+literal `source_ref` prefix `mock-demo-mailbox:` (never the configured demo mailbox's real
+address), so origin="email" needs no `EmailAccount` lookup to tell mock from real; a
+folder-origin source falls back to a path heuristic (`sample_data` in the path). A candidate
+counts as "real" if it has at least one real source, "mock" only if every source is mock.
+
+Wired as a `data_mode` query param ("all"/"real"/"mock") through: `candidates_page()` +
+`candidate_facets()` (All Candidates, including its filter-bar options), `GET /matches/{job_id}`
+(Match Results viewing), and every candidate/match-derived Dashboard widget (KPIs, tier
+distribution, top skills, visa breakdown, jobs snapshot, needs-attention — recent activity
+stays unfiltered, it's a scan log, not candidate data). Surfaced as a persistent segmented
+control in the app header (`data-mode-toggle.tsx`, backed by `data-mode-store.ts`), with live
+counts from a new `GET /candidates/data-mode-counts`.
+
+Initially shipped as view-only; the user then asked for it to also scope **Run matching**
+itself, not just what's displayed — `POST /matches/run/{job_id}` now takes the same
+`data_mode` param and filters the candidate pool *before* scoring, so "Real" actually matches
+against only real candidates rather than the whole pool with results filtered after the fact.
+`matches-store.ts`'s `runMatching`/`loadMatches` read the toggle internally, so every call
+site (Match Results' "Run matching," each job card's inline "Run," the Jobs page's bulk
+"Match all"/"Match selected") picked it up with no per-call-site changes needed.
+
 ## Cross-references
 
 - [Design Decisions](design-decisions.md) — the ADRs behind each choice above
