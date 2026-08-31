@@ -28,10 +28,9 @@ export function JobScanMatchPanel({ jobId }: { jobId: string }) {
   const [mode, setMode] = useState<Mode>("existing_data");
   const { folderPaths, selectedAccountIds, scanFolders, scanEmail, scanning, scanProgress } = useScanStore();
   const runMatching = useMatchesStore((s) => s.runMatching);
-  const matchingLoading = useMatchesStore((s) => s.loading);
   const activeRunForJobId = useMatchesStore((s) => s.activeRunForJobId);
   const push = useToastStore((s) => s.push);
-  const isMatchingThisJob = matchingLoading && activeRunForJobId === jobId;
+  const isMatchingThisJob = activeRunForJobId === jobId;
   const { pct: matchPct, remainingSeconds: matchRemaining, overrun: matchOverrun } = useSimulatedProgress(
     MATCHING_ESTIMATED_SECONDS,
     isMatchingThisJob,

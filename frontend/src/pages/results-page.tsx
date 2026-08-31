@@ -79,6 +79,8 @@ export function ResultsPage() {
     rescanningMatched,
     rescanMatchedProgress,
     activeRescanForJobId,
+    runningMatch,
+    activeRunForJobId,
     resumeRescanIfAny,
     resumeRunMatchingIfAny,
   } = useMatchesStore();
@@ -91,7 +93,22 @@ export function ResultsPage() {
   const [compareIds, setCompareIds] = useState<Set<string>>(new Set());
   const [comparing, setComparing] = useState(false);
   const [sort, setSort] = useState<SortKey>("best_match");
-  const { pct, remainingSeconds, overrun } = useSimulatedProgress(15, loading);
+  // What the currently-displayed results were actually loaded with — Top N
+  // and Sort are edited freely, but only take effect once "Load results" is
+  // clicked (or the job dropdown is changed, which reloads immediately).
+  // Comparing the live control values against these is how the "pending
+  // changes" note below decides whether to show.
+  const [appliedSort, setAppliedSort] = useState<SortKey>("best_match");
+  const [lastLoadedTopN, setLastLoadedTopN] = useState<number | null>(null);
+  // Scoped to the job actually selected — runningMatch/activeRunForJobId are
+  // global (one match run at a time, possibly kicked off from the Jobs
+  // page's bulk actions elsewhere), so without this check switching to a
+  // job that ISN'T the one running would still show its progress bar,
+  // exactly the "confusing" case being fixed here.
+  const isMatchingSelectedJob = runningMatch && activeRunForJobId === selectedJobId;
+  const isMatchingOtherJob = runningMatch && activeRunForJobId !== null && activeRunForJobId !== selectedJobId;
+  const isUpdatingOtherJob = rescanningMatched && activeRescanForJobId !== null && activeRescanForJobId !== selectedJobId;
+  const { pct, remainingSeconds, overrun } = useSimulatedProgress(15, isMatchingSelectedJob || loading);
   const { pct: rescanPct, remainingSeconds: rescanRemaining, overrun: rescanOverrun } = useSimulatedProgress(
     Math.max(10, matches.length * 3),
     rescanningMatched,
@@ -112,13 +129,16 @@ export function ResultsPage() {
   useEffect(() => {
     // Arriving here via a "View results" link elsewhere (job param in the
     // URL) is an explicit request to see this job's results, so that one
-    // load happens automatically. Changing the job or Top N afterward via
-    // the controls on this page does not auto-reload — see handleLoad,
-    // bound to the "Load results" button below.
+    // load happens automatically.
     const fromQuery = searchParams.get("job");
     if (fromQuery && fromQuery !== selectedJobId) {
       selectJob(fromQuery);
-      loadMatches(fromQuery).catch(() => {});
+      loadMatches(fromQuery)
+        .then(() => {
+          setAppliedSort(sort);
+          setLastLoadedTopN(topN);
+        })
+        .catch(() => {});
     }
   }, [searchParams]);
 
@@ -127,13 +147,36 @@ export function ResultsPage() {
     // displayed under the new scope rather than leaving stale results
     // (e.g. mock candidates) on screen after switching to "Real only".
     if (selectedJobId && matches.length > 0) {
-      loadMatches(selectedJobId).catch((e) => push(String(e), "error"));
+      loadMatches(selectedJobId)
+        .then(() => {
+          setAppliedSort(sort);
+          setLastLoadedTopN(topN);
+        })
+        .catch((e) => push(String(e), "error"));
     }
   }, [dataMode]);
 
+  // Changing the job dropdown is a clear, deliberate "show me this job's
+  // results" action — unlike Top N or Sort (see below), it loads
+  // immediately rather than waiting for "Load results".
+  function handleJobChange(jobId: string) {
+    selectJob(jobId);
+    loadMatches(jobId)
+      .then(() => {
+        setAppliedSort(sort);
+        setLastLoadedTopN(topN);
+      })
+      .catch((e) => push(String(e), "error"));
+  }
+
   function handleLoad() {
     if (!selectedJobId) return;
-    loadMatches(selectedJobId).catch((e) => push(String(e), "error"));
+    loadMatches(selectedJobId)
+      .then(() => {
+        setAppliedSort(sort);
+        setLastLoadedTopN(topN);
+      })
+      .catch((e) => push(String(e), "error"));
   }
 
   function handleRescanMatched() {
@@ -145,6 +188,8 @@ export function ResultsPage() {
     if (!selectedJobId) return;
     try {
       await runMatching(selectedJobId);
+      setAppliedSort(sort);
+      setLastLoadedTopN(topN);
       push("Matching complete", "success");
     } catch (e) {
       push(String(e), "error");
@@ -179,12 +224,17 @@ export function ResultsPage() {
   }
 
   const compareMatches = useMemo(() => matches.filter((m) => compareIds.has(m.id)), [matches, compareIds]);
-  const sortedMatches = useMemo(() => sortMatches(matches, sort), [matches, sort]);
-  // Switching the job dropdown no longer auto-reloads (see handleLoad) —
-  // the currently-displayed matches can belong to a job other than the one
-  // now selected. Detect that rather than silently showing mismatched
-  // results under the new job's header.
+  // Sorting applies appliedSort, not the live sort dropdown — see
+  // hasPendingChanges below, Sort only takes effect once "Load results" is
+  // clicked, same as Top N.
+  const sortedMatches = useMemo(() => sortMatches(matches, appliedSort), [matches, appliedSort]);
+  // A job switch reloads immediately (see handleJobChange) so this should
+  // only ever be true for the brief moment between selecting a job and its
+  // load completing — kept as a safety net against showing mismatched
+  // results under the wrong job's header.
   const resultsAreStale = matches.length > 0 && matches[0].job_id !== selectedJobId;
+  const hasPendingChanges =
+    !resultsAreStale && lastLoadedTopN !== null && (topN !== lastLoadedTopN || sort !== appliedSort);
 
   return (
     <div className="mx-auto max-w-4xl">
@@ -193,7 +243,7 @@ export function ResultsPage() {
       <div className="mb-2 flex flex-wrap items-center gap-2">
         <select
           value={selectedJobId ?? ""}
-          onChange={(e) => selectJob(e.target.value)}
+          onChange={(e) => handleJobChange(e.target.value)}
           className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm font-medium text-zinc-700 shadow-sm dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
         >
           {jobs.map((j) => (
@@ -214,10 +264,16 @@ export function ResultsPage() {
             className="w-12 bg-transparent text-center font-medium text-zinc-800 outline-none dark:text-zinc-100"
           />
         </div>
-        <Button variant="secondary" icon={<RefreshCw size={14} />} loading={loading} disabled={!selectedJobId} onClick={handleLoad}>
+        <Button
+          variant={hasPendingChanges ? "primary" : "secondary"}
+          icon={<RefreshCw size={14} />}
+          loading={loading}
+          disabled={!selectedJobId}
+          onClick={handleLoad}
+        >
           Load results
         </Button>
-        <Button icon={<Play size={14} />} loading={loading} disabled={!selectedJobId} onClick={handleRun}>
+        <Button icon={<Play size={14} />} loading={isMatchingSelectedJob} disabled={!selectedJobId || isMatchingSelectedJob} onClick={handleRun}>
           Run matching
         </Button>
         <Button
@@ -231,10 +287,16 @@ export function ResultsPage() {
           Check for updates
         </Button>
         <SortSelect value={sort} onChange={setSort} options={SORT_OPTIONS} />
-        {!loading && (
+        {!loading && !isMatchingSelectedJob && (
           <TimingBadge seconds={lastElapsedSeconds} label={lastLoadWasFullRun ? "Matched" : "Loaded"} />
         )}
       </div>
+
+      {hasPendingChanges && !loading && (
+        <p className="mb-4 text-xs font-medium text-amber-600 dark:text-amber-400">
+          Top N or sort changed — click “Load results” to update.
+        </p>
+      )}
 
       {rescanningMatched && activeRescanForJobId === selectedJobId && (
         <div className="mb-4">
@@ -252,6 +314,15 @@ export function ResultsPage() {
         </div>
       )}
 
+      {(isMatchingOtherJob || isUpdatingOtherJob) && (
+        <p className="mb-4 text-xs text-zinc-500 dark:text-zinc-400">
+          {isMatchingOtherJob
+            ? `“${jobs.find((j) => j.id === activeRunForJobId)?.title ?? "Another job"}” is currently being matched`
+            : `“${jobs.find((j) => j.id === activeRescanForJobId)?.title ?? "Another job"}” is currently checking for updates`}
+          {" — select it above to see progress."}
+        </p>
+      )}
+
       {selectedJob && (
         <p className="mb-5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-zinc-500 dark:text-zinc-400">
           {selectedJob.company && (
@@ -265,9 +336,14 @@ export function ResultsPage() {
         </p>
       )}
 
-      {loading && (
+      {(isMatchingSelectedJob || loading) && (
         <div className="mb-4">
-          <ProgressBar pct={pct} label="Scoring candidates against this job…" remainingSeconds={remainingSeconds} overrun={overrun} />
+          <ProgressBar
+            pct={pct}
+            label={isMatchingSelectedJob ? "Scoring candidates against this job…" : "Loading results…"}
+            remainingSeconds={remainingSeconds}
+            overrun={overrun}
+          />
         </div>
       )}
 

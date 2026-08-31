@@ -26,7 +26,13 @@ interface MatchesState {
   // other long-running action. No live progress from the backend (a single
   // job's match run is fast enough that the UI's simulated progress bar is
   // enough); activeRunForJobId is what lets a page know a job it cares
-  // about is still in flight after a refresh.
+  // about is still in flight after a refresh — and, since it's tracked
+  // separately from `loading` (a plain loadMatches GET), lets a page tell
+  // "matching is running for job X" apart from "I'm mid-fetch," so
+  // selecting job X while a bulk match/update loop elsewhere is working on
+  // it (see jobs-page.tsx's bulk-jobs-store) shows that job's real progress
+  // instead of nothing.
+  runningMatch: boolean;
   activeRunJobId: string | null;
   activeRunForJobId: string | null;
   setTopN: (n: number) => void;
@@ -84,13 +90,20 @@ export const useMatchesStore = create<MatchesState>()(
       }
 
       async function followRunMatchingJob(jobId: string, jobForId: string): Promise<Match[]> {
-        set({ loading: true, activeRunJobId: jobId, activeRunForJobId: jobForId, lastLoadWasFullRun: true });
+        set({ runningMatch: true, activeRunJobId: jobId, activeRunForJobId: jobForId, lastLoadWasFullRun: true });
         try {
           while (true) {
             const job = await api.getScanJob(jobId);
             if (job.status === "completed") {
+              // Only replace the displayed list if the viewer is still
+              // looking at this job — otherwise this would silently swap
+              // out whatever job's results they've since switched to.
+              if (get().matches[0]?.job_id === jobForId || get().matches.length === 0) {
+                const result = await api.listMatches(jobForId, get().topN, useDataModeStore.getState().dataMode);
+                set({ matches: result.matches, lastElapsedSeconds: result.elapsed_seconds });
+                return result.matches;
+              }
               const result = await api.listMatches(jobForId, get().topN, useDataModeStore.getState().dataMode);
-              set({ matches: result.matches, lastElapsedSeconds: result.elapsed_seconds });
               return result.matches;
             }
             if (job.status === "failed") {
@@ -100,7 +113,7 @@ export const useMatchesStore = create<MatchesState>()(
             await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
           }
         } finally {
-          set({ loading: false, activeRunJobId: null, activeRunForJobId: null });
+          set({ runningMatch: false, activeRunJobId: null, activeRunForJobId: null });
         }
       }
 
@@ -114,6 +127,7 @@ export const useMatchesStore = create<MatchesState>()(
         rescanMatchedProgress: null,
         activeRescanJobId: null,
         activeRescanForJobId: null,
+        runningMatch: false,
         activeRunJobId: null,
         activeRunForJobId: null,
         setTopN: (n) => set({ topN: n }),
@@ -149,8 +163,8 @@ export const useMatchesStore = create<MatchesState>()(
           }
         },
         resumeRunMatchingIfAny: async () => {
-          const { activeRunJobId, activeRunForJobId, loading } = get();
-          if (!activeRunJobId || !activeRunForJobId || loading) return;
+          const { activeRunJobId, activeRunForJobId, runningMatch } = get();
+          if (!activeRunJobId || !activeRunForJobId || runningMatch) return;
           try {
             const job = await api.getScanJob(activeRunJobId);
             if (job.status === "running") {
