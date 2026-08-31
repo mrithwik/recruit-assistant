@@ -58,6 +58,7 @@ def _job_out(job) -> ScanJobOut:
         result=job.result,
         progress=job.progress,
         error=job.error,
+        cancelled=job.cancelled,
     )
 
 
@@ -176,6 +177,7 @@ async def rescan_candidate(
                     candidate, session, storage, llm, settings, mock_fixtures, on_progress=lambda r: update_progress(job.id, r)
                 )
                 record_ingest_scan(storage, session, "email", f"rescan: {candidate.email}", combined)
+                session.commit()
             complete_job(job.id, combined)
         except Exception as exc:  # noqa: BLE001 - surfaced via job status, not raised into a dead background task
             fail_job(job.id, str(exc))

@@ -17,6 +17,7 @@ interface MaintenanceState {
   runs: Record<string, TaskRunState>;
   run: (taskId: string) => Promise<void>;
   resumeIfAny: (taskId: string) => Promise<void>;
+  cancel: (taskId: string) => Promise<void>;
 }
 
 const EMPTY_RUN: TaskRunState = { jobId: null, running: false, progress: null, lastResult: null };
@@ -45,7 +46,7 @@ export const useMaintenanceStore = create<MaintenanceState>()(
                 const parts = [`${r.candidates_created} updated`];
                 if (r.duplicates_skipped) parts.push(`${r.duplicates_skipped} skipped`);
                 if (r.errors.length) parts.push(`${r.errors.length} error(s)`);
-                push(`Done — ${r.resumes_found} checked — ${parts.join(", ")}`, "success");
+                push(`${job.cancelled ? "Cancelled" : "Done"} — ${r.resumes_found} checked — ${parts.join(", ")}`, "success");
               }
               set((s) => ({
                 runs: { ...s.runs, [taskId]: { jobId: null, running: false, progress: null, lastResult: job.result ?? null } },
@@ -84,6 +85,11 @@ export const useMaintenanceStore = create<MaintenanceState>()(
           } catch {
             set((s) => ({ runs: { ...s.runs, [taskId]: { ...runFor(s.runs, taskId), jobId: null } } }));
           }
+        },
+        cancel: async (taskId) => {
+          const current = runFor(get().runs, taskId);
+          if (!current.jobId) return;
+          await api.cancelScanJob(current.jobId);
         },
       };
     },

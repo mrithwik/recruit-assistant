@@ -4,6 +4,7 @@ import { useToastStore } from "../../stores/toast-store";
 import { useMaintenanceStore, useTaskRun } from "../../stores/maintenance-store";
 import { Button } from "../ui/button";
 import { ProgressBar, useSimulatedProgress } from "../ui/progress-bar";
+import { CancelJobButton } from "../ui/cancel-job-button";
 import type { MaintenanceTask, ScanResult } from "../../lib/types";
 
 // No fixed size for a maintenance task ahead of time (it depends on how
@@ -30,7 +31,7 @@ function summarize(result: ScanResult): string {
 export function MaintenanceTaskRow({ task, onDone }: { task: MaintenanceTask; onDone?: () => void }) {
   const push = useToastStore((s) => s.push);
   const { jobId, running, progress, lastResult } = useTaskRun(task.id);
-  const { run: runTask, resumeIfAny } = useMaintenanceStore();
+  const { run: runTask, resumeIfAny, cancel } = useMaintenanceStore();
   const { pct, remainingSeconds, overrun } = useSimulatedProgress(ESTIMATED_SECONDS, running);
 
   useEffect(() => {
@@ -73,13 +74,18 @@ export function MaintenanceTaskRow({ task, onDone }: { task: MaintenanceTask; on
       {running && (
         <div>
           <ProgressBar pct={pct} label="Working…" remainingSeconds={remainingSeconds} overrun={overrun} />
-          {progress && (
-            <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-              {progress.resumes_found} checked so far — {progress.candidates_created} updated
-              {progress.duplicates_skipped > 0 && `, ${progress.duplicates_skipped} skipped`}
-              {progress.errors.length > 0 && `, ${progress.errors.length} error(s)`}
-            </p>
-          )}
+          <div className="mt-1 flex items-center justify-between">
+            {progress ? (
+              <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                {progress.resumes_found} checked so far — {progress.candidates_created} updated
+                {progress.duplicates_skipped > 0 && `, ${progress.duplicates_skipped} skipped`}
+                {progress.errors.length > 0 && `, ${progress.errors.length} error(s)`}
+              </p>
+            ) : (
+              <span />
+            )}
+            <CancelJobButton onCancel={() => cancel(task.id)} />
+          </div>
         </div>
       )}
     </div>

@@ -15,6 +15,7 @@ import { CandidateDetailPage } from "./pages/candidate-detail-page";
 import { AllCandidatesPage } from "./pages/all-candidates-page";
 import { CriteriaPage } from "./pages/criteria-page";
 import { HistoryPage } from "./pages/history-page";
+import { ScanLogsPage } from "./pages/scan-logs-page";
 import { ScreeningSourcesPage } from "./pages/screening-sources-page";
 
 export default function App() {
@@ -39,6 +40,7 @@ export default function App() {
                 <Route path="dashboard" element={<DashboardPage />} />
                 <Route path="jobs" element={<JobsPage />} />
                 <Route path="scan" element={<ScanPage />} />
+                <Route path="scan/logs" element={<ScanLogsPage />} />
                 <Route path="email-access" element={<EmailAccessPage />} />
                 <Route path="connections" element={<ConnectionsPage />} />
                 <Route path="results" element={<ResultsPage />} />

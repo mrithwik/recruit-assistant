@@ -27,6 +27,11 @@ interface CandidatesState {
   workVisaStatuses: string[];
   experienceMin?: number;
   experienceMax?: number;
+  // Same definition as the Dashboard's "Needs attention" tile — a
+  // candidate with at least one red-flagged match or one match missing
+  // required info, across any job. A single on/off toggle rather than a
+  // multi-select since a candidate either needs a look or doesn't.
+  needsAttention: boolean;
   facets: CandidateFacets | null;
   facetsLoading: boolean;
   // "Rescan all for updates" — one bulk pass over every connected account +
@@ -54,11 +59,14 @@ interface CandidatesState {
   toggleEmploymentStatus: (status: string) => void;
   toggleWorkVisaStatus: (status: string) => void;
   setExperienceRange: (min: number | undefined, max: number | undefined) => void;
+  setNeedsAttention: (value: boolean) => void;
   clearAdvancedFilters: () => void;
   rescanAll: () => Promise<void>;
   resumeRescanAllIfAny: () => Promise<void>;
   rescanCandidate: (id: string) => Promise<ScanResult | null>;
   resumeCandidateRescanIfAny: (id: string) => Promise<ScanResult | null>;
+  cancelRescanAll: () => Promise<void>;
+  cancelCandidateRescan: () => Promise<void>;
 }
 
 function toggleIn(list: string[], value: string): string[] {
@@ -83,7 +91,8 @@ export const useCandidatesStore = create<CandidatesState>()(
               const push = useToastStore.getState().push;
               if (r) {
                 push(
-                  `Rescan complete — ${r.candidates_created} new, ${r.candidates_updated} updated, ${r.duplicates_skipped} unchanged` +
+                  (job.cancelled ? "Rescan cancelled — kept " : "Rescan complete — ") +
+                    `${r.candidates_created} new, ${r.candidates_updated} updated, ${r.duplicates_skipped} unchanged` +
                     (r.errors.length ? `, ${r.errors.length} error(s)` : ""),
                   "success",
                 );
@@ -134,6 +143,7 @@ export const useCandidatesStore = create<CandidatesState>()(
         skills: [],
         employmentStatuses: [],
         workVisaStatuses: [],
+        needsAttention: false,
         facets: null,
         facetsLoading: false,
         rescanningAll: false,
@@ -156,6 +166,7 @@ export const useCandidatesStore = create<CandidatesState>()(
             workVisaStatuses,
             experienceMin,
             experienceMax,
+            needsAttention,
           } = get();
           set({ loading: true });
           try {
@@ -172,6 +183,7 @@ export const useCandidatesStore = create<CandidatesState>()(
               work_visa_status: workVisaStatuses.length ? workVisaStatuses : undefined,
               experience_min: experienceMin,
               experience_max: experienceMax,
+              needs_attention: needsAttention || undefined,
               data_mode: useDataModeStore.getState().dataMode,
             });
             set({ candidates: result.candidates, total: result.total, lastElapsedSeconds: result.elapsed_seconds });
@@ -199,8 +211,17 @@ export const useCandidatesStore = create<CandidatesState>()(
         toggleWorkVisaStatus: (status) =>
           set((s) => ({ workVisaStatuses: toggleIn(s.workVisaStatuses, status), page: 1 })),
         setExperienceRange: (min, max) => set({ experienceMin: min, experienceMax: max, page: 1 }),
+        setNeedsAttention: (value) => set({ needsAttention: value, page: 1 }),
         clearAdvancedFilters: () =>
-          set({ skills: [], employmentStatuses: [], workVisaStatuses: [], experienceMin: undefined, experienceMax: undefined, page: 1 }),
+          set({
+            skills: [],
+            employmentStatuses: [],
+            workVisaStatuses: [],
+            experienceMin: undefined,
+            experienceMax: undefined,
+            needsAttention: false,
+            page: 1,
+          }),
         rescanAll: async () => {
           const job = await api.scanAll();
           await followRescanAllJob(job.id);
@@ -237,6 +258,16 @@ export const useCandidatesStore = create<CandidatesState>()(
             set({ candidateRescanJobId: null, candidateRescanForId: null });
             return null;
           }
+        },
+        cancelRescanAll: async () => {
+          const { rescanAllJobId } = get();
+          if (!rescanAllJobId) return;
+          await api.cancelScanJob(rescanAllJobId);
+        },
+        cancelCandidateRescan: async () => {
+          const { candidateRescanJobId } = get();
+          if (!candidateRescanJobId) return;
+          await api.cancelScanJob(candidateRescanJobId);
         },
       };
     },

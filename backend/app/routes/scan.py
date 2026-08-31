@@ -24,6 +24,7 @@ from app.email_auth.oauth import get_valid_access_token
 from app.matching.llm_client import LLMClient
 from app.models.db import EmailAccount, IngestScanHistoryEntry, ResumeSource
 from app.models.schemas import (
+    IngestScanLogOut,
     ScanEmailRequest,
     ScanFolderRequest,
     ScanJobOut,
@@ -44,6 +45,8 @@ from app.scanning.job_registry import (
     create_job,
     fail_job,
     get_job,
+    is_cancel_requested,
+    request_cancel,
     update_progress,
 )
 from app.storage.base import BaseStorageBackend
@@ -126,6 +129,7 @@ def _job_out(job) -> ScanJobOut:
         result=job.result,
         progress=job.progress,
         error=job.error,
+        cancelled=job.cancelled,
     )
 
 
@@ -158,8 +162,10 @@ async def scan_folders(
                     date_end=payload.date_end,
                     max_concurrent_embeddings=settings.max_concurrent_llm_calls,
                     on_progress=lambda r: update_progress(job.id, r),
+                    on_should_cancel=lambda: is_cancel_requested(job.id),
                 )
                 record_ingest_scan(storage, session, "folder", ", ".join(payload.folder_paths), result)
+                session.commit()
             complete_job(job.id, result)
         except Exception as exc:  # noqa: BLE001 - surfaced via job status, not raised into a dead background task
             fail_job(job.id, str(exc))
@@ -193,6 +199,8 @@ async def scan_email_accounts(
             )
             with storage.session() as session:
                 for account_id in payload.account_ids:
+                    if is_cancel_requested(job.id):
+                        break
                     account = session.get(EmailAccount, account_id) if not get_use_mock_email() else None
                     if not get_use_mock_email() and not account:
                         combined.errors.append(f"{account_id}: account not found")
@@ -248,6 +256,7 @@ async def scan_email_accounts(
                         date_end=payload.date_end,
                         max_concurrent_embeddings=settings.max_concurrent_llm_calls,
                         on_progress=_on_progress,
+                        on_should_cancel=lambda: is_cancel_requested(job.id),
                     )
                     combined.resumes_found += result.resumes_found
                     combined.candidates_created += result.candidates_created
@@ -256,6 +265,7 @@ async def scan_email_accounts(
                     combined.errors.extend(result.errors)
                     combined.elapsed_seconds = round(combined.elapsed_seconds + result.elapsed_seconds, 2)
                 record_ingest_scan(storage, session, "email", ", ".join(account_labels), combined)
+                session.commit()
             complete_job(job.id, combined)
         except Exception as exc:  # noqa: BLE001 - surfaced via job status, not raised into a dead background task
             fail_job(job.id, str(exc))
@@ -310,6 +320,7 @@ async def scan_all(
                         embedding_model=settings.embedding_model,
                         max_concurrent_embeddings=settings.max_concurrent_llm_calls,
                         on_progress=lambda r: update_progress(job.id, r),
+                        on_should_cancel=lambda: is_cancel_requested(job.id),
                     )
                     combined.resumes_found += result.resumes_found
                     combined.candidates_created += result.candidates_created
@@ -319,6 +330,8 @@ async def scan_all(
                     combined.elapsed_seconds += result.elapsed_seconds
 
                 for account_id in account_ids:
+                    if is_cancel_requested(job.id):
+                        break
                     account = session.get(EmailAccount, account_id) if not get_use_mock_email() else None
                     if not get_use_mock_email() and not account:
                         combined.errors.append(f"{account_id}: account not found")
@@ -337,6 +350,7 @@ async def scan_all(
                         embedding_model=settings.embedding_model,
                         max_concurrent_embeddings=settings.max_concurrent_llm_calls,
                         on_progress=lambda r: update_progress(job.id, r),
+                        on_should_cancel=lambda: is_cancel_requested(job.id),
                     )
                     combined.resumes_found += result.resumes_found
                     combined.candidates_created += result.candidates_created
@@ -346,6 +360,7 @@ async def scan_all(
                     combined.elapsed_seconds += result.elapsed_seconds
 
                 record_ingest_scan(storage, session, "email" if account_ids else "folder", "rescan all", combined)
+                session.commit()
             complete_job(job.id, combined)
         except Exception as exc:  # noqa: BLE001 - surfaced via job status, not raised into a dead background task
             fail_job(job.id, str(exc))
@@ -354,9 +369,37 @@ async def scan_all(
     return _job_out(job)
 
 
+@router.get("/logs", response_model=list[IngestScanLogOut])
+def list_scan_logs(storage: BaseStorageBackend = Depends(get_storage)):
+    """Every completed scan/rescan/maintenance run, most recent first — a
+    detailed record for monitoring purposes (what ran, what source, what it
+    found), distinct from Recent Activity on the Dashboard (which summarizes
+    and truncates for a quick glance). See scan-page.tsx's "View scan
+    activity log" link."""
+    with storage.session() as session:
+        stmt = select(IngestScanHistoryEntry).order_by(IngestScanHistoryEntry.ran_at.desc())
+        return list(session.execute(stmt).scalars())
+
+
 @router.get("/jobs/{job_id}", response_model=ScanJobOut)
 async def get_scan_job(job_id: str):
     job = get_job(job_id)
     if job is None:
         raise HTTPException(404, "Scan job not found.")
     return _job_out(job)
+
+
+@router.post("/jobs/{job_id}/cancel", response_model=ScanJobOut, status_code=202)
+async def cancel_scan_job(job_id: str):
+    """Generic cancel for any job_registry-backed job — scans, rescans,
+    matching runs, maintenance tasks all share the same registry, so one
+    route works for all of them (mirroring GET /scan/jobs/{id} above).
+    Cooperative: marks the job so its own loop stops at its next checkpoint
+    and keeps whatever it already found/saved rather than discarding it —
+    see job_registry.request_cancel for why "discard everything" isn't
+    what this does."""
+    job = get_job(job_id)
+    if job is None:
+        raise HTTPException(404, "Scan job not found.")
+    request_cancel(job_id)
+    return _job_out(get_job(job_id))

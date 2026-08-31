@@ -94,6 +94,7 @@ async def run_scan(
     max_concurrent_embeddings: int = 8,
     checkpoint_every: int = 500,
     on_progress: "Callable[[ScanResult], None] | None" = None,
+    on_should_cancel: "Callable[[], bool] | None" = None,
 ) -> ScanResult:
     """checkpoint_every / on_progress exist for real-mailbox-scale scans (see
     project-log): the previous single-commit-at-the-end design meant a scan
@@ -227,6 +228,13 @@ async def run_scan(
                 )
             if resumes_found % checkpoint_every == 0:
                 await _flush_checkpoint()
+
+            # Checked once per resume (cheap, in-memory) — cancelling stops
+            # the scan here, after committing everything found so far, not
+            # mid-resume. Whatever was already found stays; nothing about
+            # the resumes not yet reached is touched.
+            if on_should_cancel and on_should_cancel():
+                break
 
     await _flush_checkpoint()
     return ScanResult(

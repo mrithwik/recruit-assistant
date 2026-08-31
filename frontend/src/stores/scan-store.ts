@@ -48,6 +48,10 @@ interface ScanState {
   // reload, resumeActiveScanIfAny() checks this id and reattaches instead
   // of silently losing visibility into an already-running scan.
   activeJobId: string | null;
+  // Set on the most recent finished scan, whichever way it finished —
+  // lets the Scan Sources page word its result panel as "cancelled, kept
+  // N so far" instead of implying the scan ran to completion normally.
+  lastResultCancelled: boolean;
   // Persisted separately from component state (see components/scan/sample-data-generator.tsx)
   // so navigating away from Scan Sources and back doesn't lose the last-generated dataset —
   // this was reported as "generated data not showing up when I go between tabs".
@@ -68,6 +72,7 @@ interface ScanState {
   scanFolders: () => Promise<void>;
   scanEmail: () => Promise<void>;
   resumeActiveScanIfAny: () => Promise<void>;
+  cancelActiveScan: () => Promise<void>;
   setLastGenerated: (result: GenerateSampleDataResult) => void;
   fetchScheduledSources: () => Promise<void>;
   setSourceAutoScan: (kind: "folder" | "email_account", ref: string, enabled: boolean, includeSubfolders?: boolean) => Promise<void>;
@@ -95,8 +100,10 @@ export const useScanStore = create<ScanState>()(
             if (announceViaToast) useToastStore.getState().push(message, "error");
             throw new Error(message);
           }
-          set({ lastResult: job.result ?? null });
-          if (announceViaToast) useToastStore.getState().push("Scan complete", "success");
+          set({ lastResult: job.result ?? null, lastResultCancelled: job.cancelled });
+          if (announceViaToast) {
+            useToastStore.getState().push(job.cancelled ? "Scan cancelled — kept what was found so far" : "Scan complete", "success");
+          }
         } finally {
           set({ scanning: false, scanProgress: null, activeJobId: null });
         }
@@ -112,6 +119,7 @@ export const useScanStore = create<ScanState>()(
         scanError: null,
         scanProgress: null,
         activeJobId: null,
+        lastResultCancelled: false,
         lastGenerated: null,
         scheduledSources: [],
         mockMode: null,
@@ -169,8 +177,8 @@ export const useScanStore = create<ScanState>()(
               if (job.status === "failed") {
                 useToastStore.getState().push(job.error ?? "Scan failed.", "error");
               } else {
-                set({ lastResult: job.result ?? null });
-                useToastStore.getState().push("Scan complete", "success");
+                set({ lastResult: job.result ?? null, lastResultCancelled: job.cancelled });
+                useToastStore.getState().push(job.cancelled ? "Scan cancelled — kept what was found so far" : "Scan complete", "success");
               }
               set({ activeJobId: null });
             }
@@ -180,6 +188,14 @@ export const useScanStore = create<ScanState>()(
             // reattach to; just drop the stale reference.
             set({ activeJobId: null });
           }
+        },
+        cancelActiveScan: async () => {
+          const { activeJobId } = get();
+          if (!activeJobId) return;
+          await api.cancelScanJob(activeJobId);
+          // followJob's own poll loop picks up the "completed, cancelled"
+          // status on its next tick and handles the toast/state cleanup —
+          // nothing else to do here.
         },
         setLastGenerated: (result) => set({ lastGenerated: result }),
         fetchScheduledSources: async () => {

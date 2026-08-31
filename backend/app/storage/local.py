@@ -23,7 +23,8 @@ from sqlalchemy import (
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.data_classification import candidate_id_condition
-from app.models.db import Base, Candidate, IngestScanHistoryEntry, ResumeSource, SearchHistoryEntry, User
+from app.models.db import Base, Candidate, IngestScanHistoryEntry, Match, ResumeSource, SearchHistoryEntry, User
+from app.models.enums import MatchTier
 
 _SORT_COLUMNS = {
     "recent": (Candidate.date_submitted, True),
@@ -156,6 +157,7 @@ class LocalStorageBackend(BaseStorageBackend):
         experience_min: float | None = None,
         experience_max: float | None = None,
         data_mode: str = "all",
+        needs_attention: bool = False,
     ) -> tuple[list[Candidate], int]:
         """Filters + sorts + pages entirely in SQL instead of loading every
         matching candidate into Python and slicing there — the previous
@@ -203,6 +205,23 @@ class LocalStorageBackend(BaseStorageBackend):
             conditions.append(Candidate.experience_years >= experience_min)
         if experience_max is not None:
             conditions.append(Candidate.experience_years <= experience_max)
+        if needs_attention:
+            # Same definition as the Dashboard's "Needs attention" tile
+            # (dashboard/service.py's _needs_attention) — a candidate with
+            # at least one red-flagged match, or one match missing required
+            # info, across any job — surfaced here so a recruiter can jump
+            # straight to that candidate list instead of only seeing it a
+            # few rows at a time on the dashboard.
+            conditions.append(
+                Candidate.id.in_(
+                    select(Match.candidate_id).where(
+                        or_(
+                            Match.tier == MatchTier.RED_FLAG.value,
+                            func.json_array_length(Match.missing_info) > 0,
+                        )
+                    )
+                )
+            )
         data_mode_condition = candidate_id_condition(Candidate.id, data_mode)
         if data_mode_condition is not None:
             conditions.append(data_mode_condition)

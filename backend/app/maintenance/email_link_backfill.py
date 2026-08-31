@@ -64,6 +64,7 @@ async def backfill_email_links(
     session: Session,
     settings: Settings,
     on_progress: Callable[[ScanResult], None] | None = None,
+    on_should_cancel: Callable[[], bool] | None = None,
 ) -> ScanResult:
     sources = list(
         session.execute(
@@ -85,6 +86,8 @@ async def backfill_email_links(
         by_account_email.setdefault(account_email, []).append(source)
 
     for account_email, account_sources in by_account_email.items():
+        if on_should_cancel and on_should_cancel():
+            break
         considered += len(account_sources)
         account = session.execute(
             select(EmailAccount).where(EmailAccount.email_address == account_email)
@@ -124,6 +127,8 @@ async def backfill_email_links(
                             errors=errors,
                         )
                     )
+                if on_should_cancel and on_should_cancel():
+                    break
 
     return ScanResult(
         resumes_found=considered,

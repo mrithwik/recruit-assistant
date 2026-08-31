@@ -6,6 +6,7 @@ import { useMatchesStore } from "../../stores/matches-store";
 import { useToastStore } from "../../stores/toast-store";
 import { MatchBadge } from "../ui/match-badge";
 import { ProgressBar, useSimulatedProgress } from "../ui/progress-bar";
+import { CancelJobButton } from "../ui/cancel-job-button";
 import type { JobMatchSummary } from "../../lib/types";
 
 // Requirement: a recruiter running matches for several jobs was losing
@@ -23,6 +24,7 @@ export function JobResultsSummary({ jobId }: { jobId: string }) {
     rescanningMatched,
     rescanMatchedProgress,
     activeRescanForJobId,
+    cancelRescanMatched,
   } = useMatchesStore();
   const thisJobRescanning = rescanningMatched && activeRescanForJobId === jobId;
   const otherJobRescanning = rescanningMatched && activeRescanForJobId !== jobId;
@@ -110,11 +112,16 @@ export function JobResultsSummary({ jobId }: { jobId: string }) {
             remainingSeconds={rescanRemaining}
             overrun={rescanOverrun}
           />
-          {rescanMatchedProgress && (
-            <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-              {rescanMatchedProgress.resumes_found} checked — {rescanMatchedProgress.candidates_updated} updated so far
-            </p>
-          )}
+          <div className="mt-1 flex items-center justify-between">
+            {rescanMatchedProgress ? (
+              <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                {rescanMatchedProgress.resumes_found} checked — {rescanMatchedProgress.candidates_updated} updated so far
+              </p>
+            ) : (
+              <span />
+            )}
+            <CancelJobButton onCancel={cancelRescanMatched} />
+          </div>
         </div>
       )}
       {otherJobRescanning && (

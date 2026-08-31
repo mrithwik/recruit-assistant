@@ -61,6 +61,8 @@ export const api = {
       body: JSON.stringify({ account_ids, date_start, date_end }),
     }),
   getScanJob: (jobId: string) => request<import("./types").ScanJob>(`/scan/jobs/${jobId}`),
+  cancelScanJob: (jobId: string) =>
+    request<import("./types").ScanJob>(`/scan/jobs/${jobId}/cancel`, { method: "POST" }),
 
   getOAuthStatus: () => request<import("./types").OAuthStatus>("/email-accounts/oauth-status"),
 
@@ -86,6 +88,7 @@ export const api = {
     experience_min?: number;
     experience_max?: number;
     data_mode?: string;
+    needs_attention?: boolean;
   }) => {
     const qs = new URLSearchParams();
     if (params?.date_start) qs.set("date_start", params.date_start);
@@ -101,6 +104,7 @@ export const api = {
     if (params?.experience_min !== undefined) qs.set("experience_min", String(params.experience_min));
     if (params?.experience_max !== undefined) qs.set("experience_max", String(params.experience_max));
     if (params?.data_mode) qs.set("data_mode", params.data_mode);
+    if (params?.needs_attention) qs.set("needs_attention", "true");
     const suffix = qs.toString() ? `?${qs.toString()}` : "";
     return request<import("./types").CandidateListResult>(`/candidates${suffix}`);
   },
@@ -172,6 +176,8 @@ export const api = {
   listHistory: (jobId?: string) =>
     request<import("./types").SearchHistoryEntry[]>(`/history${jobId ? `?job_id=${jobId}` : ""}`),
 
+  listScanLogs: () => request<import("./types").IngestScanLogEntry[]>("/scan/logs"),
+
   draftEmail: (matchId: string) =>
     request<import("./types").DraftEmail>("/draft-email", {
       method: "POST",
@@ -193,6 +199,9 @@ export const api = {
     request<import("./types").DashboardSummary>(
       `/dashboard/summary${dataMode ? `?data_mode=${dataMode}` : ""}`,
     ),
+
+  activityLog: (limit: number, offset: number) =>
+    request<import("./types").ActivityLogPage>(`/dashboard/activity?limit=${limit}&offset=${offset}`),
 
   generateSampleData: (initial: number, followups: number, upskill: number, seed: number) =>
     request<import("./types").GenerateSampleDataResult>("/dev-tools/generate-sample-data", {

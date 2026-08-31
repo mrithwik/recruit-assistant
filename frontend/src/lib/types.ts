@@ -150,6 +150,20 @@ export interface SearchHistoryEntry {
   criteria_version: number;
 }
 
+export interface IngestScanLogEntry {
+  id: string;
+  origin: "email" | "folder" | "maintenance";
+  source_label: string;
+  resumes_found: number;
+  candidates_created: number;
+  candidates_updated: number;
+  duplicates_skipped: number;
+  error_count: number;
+  ran_at: string;
+  batch_id: string | null;
+  job_id: string | null;
+}
+
 export interface EmailAccount {
   id: string;
   provider: "gmail" | "outlook";
@@ -190,6 +204,7 @@ export interface ScanJob {
   result?: ScanResult;
   progress?: ScanResult;
   error?: string;
+  cancelled: boolean;
 }
 
 export interface OAuthStatus {
@@ -273,16 +288,6 @@ export interface JobSnapshot {
   last_matched_at: string | null;
 }
 
-export interface AttentionItem {
-  match_id: string;
-  job_id: string;
-  job_title: string;
-  candidate_id: string;
-  candidate_name: string;
-  reason: string;
-  tier: MatchTier;
-}
-
 export interface ActivityItem {
   type: "scan" | "candidate" | "ingest";
   timestamp: string;
@@ -290,6 +295,11 @@ export interface ActivityItem {
   job_id: string;
   candidate_id: string;
   sub_items: ActivityItem[];
+}
+
+export interface ActivityLogPage {
+  items: ActivityItem[];
+  total: number;
 }
 
 export interface DashboardSummary {
@@ -300,7 +310,7 @@ export interface DashboardSummary {
   top_skills: NamedCount[];
   visa_breakdown: NamedCount[];
   jobs_snapshot: JobSnapshot[];
-  needs_attention: AttentionItem[];
+  missing_info_breakdown: NamedCount[];
   recent_activity: ActivityItem[];
 }
 

@@ -5,6 +5,7 @@ import { Header } from "./header";
 import { Sidebar } from "./sidebar";
 import { Toaster } from "../ui/toaster";
 import { RouteErrorBoundary } from "./route-error-boundary";
+import { GlobalBulkProgressBar } from "./global-bulk-progress-bar";
 
 const SCROLL_THRESHOLD = 320;
 
@@ -28,6 +29,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   return (
     <div className="flex h-screen flex-col bg-zinc-50 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100">
       <Header />
+      <GlobalBulkProgressBar />
       <div className="flex flex-1 overflow-hidden">
         <Sidebar />
         <main ref={mainRef} className="relative flex-1 overflow-y-auto px-6 py-7 md:px-10">

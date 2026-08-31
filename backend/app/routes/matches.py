@@ -18,7 +18,7 @@ from app.matching.matcher import match_job_against_pool, score_to_tier
 from app.models.db import Candidate, Job, Match, SearchHistoryEntry
 from app.models.schemas import FlagIn, JobMatchSummary, MatchListOut, MatchOut, MatchReasons, MatchSummaryItem, ScanJobOut, ScanResult
 from app.routes.candidates import _batch_email_links, _batch_origins, _to_out
-from app.scanning.job_registry import ScanAlreadyRunningError, complete_job, create_job, fail_job
+from app.scanning.job_registry import ScanAlreadyRunningError, complete_job, create_job, fail_job, is_cancel_requested
 from app.storage.base import BaseStorageBackend
 
 router = APIRouter(prefix="/api/v1/matches", tags=["matches"])
@@ -33,6 +33,7 @@ def _job_out(job) -> ScanJobOut:
         result=job.result,
         progress=job.progress,
         error=job.error,
+        cancelled=job.cancelled,
     )
 
 
@@ -126,6 +127,19 @@ async def run_matching(
                     for c in needs_embedding:
                         c.embedding = embedding_by_id[c.id]
                     session.flush()
+
+                # Cancellation can only be checked between phases, not mid
+                # concurrent-gather (match_job_against_pool scores the whole
+                # pool in one bounded_gather pass) — this is the last point
+                # before that expensive phase starts, so a cancel requested
+                # during embedding still takes effect instead of running the
+                # full scoring pass anyway.
+                if is_cancel_requested(rjob.id):
+                    complete_job(
+                        rjob.id,
+                        ScanResult(resumes_found=len(candidates), candidates_created=0, candidates_updated=0, duplicates_skipped=0),
+                    )
+                    return
 
                 pool = [
                     {

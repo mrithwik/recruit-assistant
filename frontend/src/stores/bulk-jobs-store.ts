@@ -20,8 +20,16 @@ interface BulkJobsState {
   // loop (after a refresh) keeps grouping under the same batch instead of
   // splitting into "before" and "after" entries.
   batchId: string | null;
+  // In-memory only (not persisted — a stop request only means anything for
+  // the loop instance currently executing; after a refresh there's nothing
+  // running to stop, resumeIfAny would just start a fresh loop). Checked
+  // between steps; also cancels whichever step is actually in flight right
+  // now so "stop" doesn't just mean "stop queuing more" while the current
+  // one keeps running to completion regardless.
+  stopRequested: boolean;
   start: (op: BulkJobsOp, jobIds: string[]) => Promise<void>;
   resumeIfAny: () => Promise<void>;
+  stop: () => Promise<void>;
 }
 
 function jobTitleFor(jobId: string): string {
@@ -70,9 +78,9 @@ export const useBulkJobsStore = create<BulkJobsState>()(
   persist(
     (set, get) => {
       async function loop(): Promise<void> {
-        set({ running: true });
+        set({ running: true, stopRequested: false });
         try {
-          while (get().index < get().jobIds.length) {
+          while (get().index < get().jobIds.length && !get().stopRequested) {
             const { jobIds, index, opType, batchId } = get();
             const jobId = jobIds[index];
             const outcome = await runOneStep(opType as BulkJobsOp, jobId, batchId);
@@ -83,23 +91,34 @@ export const useBulkJobsStore = create<BulkJobsState>()(
               failures: outcome === "failed" ? [...s.failures, jobTitleFor(jobId)] : s.failures,
             }));
           }
-          const { opType, successCount, skippedCount, failures } = get();
+          const { opType, successCount, skippedCount, failures, stopRequested } = get();
           const push = useToastStore.getState().push;
+          const prefix = stopRequested ? "Stopped — " : "";
           if (opType === "match") {
             push(
-              `Matched ${successCount} job(s)` + (failures.length ? `. Failed: ${failures.join(", ")}` : ""),
+              `${prefix}Matched ${successCount} job(s)` + (failures.length ? `. Failed: ${failures.join(", ")}` : ""),
               failures.length ? "error" : "success",
             );
           } else {
             push(
-              `Checked matched candidates for ${successCount} job(s)` +
+              `${prefix}Checked matched candidates for ${successCount} job(s)` +
                 (skippedCount ? `, skipped ${skippedCount} with no matches yet` : "") +
                 (failures.length ? `. Failed: ${failures.join(", ")}` : ""),
               failures.length ? "error" : "success",
             );
           }
         } finally {
-          set({ running: false, opType: null, jobIds: [], index: 0, successCount: 0, skippedCount: 0, failures: [], batchId: null });
+          set({
+            running: false,
+            opType: null,
+            jobIds: [],
+            index: 0,
+            successCount: 0,
+            skippedCount: 0,
+            failures: [],
+            batchId: null,
+            stopRequested: false,
+          });
         }
       }
 
@@ -112,6 +131,7 @@ export const useBulkJobsStore = create<BulkJobsState>()(
         skippedCount: 0,
         failures: [],
         batchId: null,
+        stopRequested: false,
         start: async (op, jobIds) => {
           if (jobIds.length === 0 || get().running) return;
           set({
@@ -132,6 +152,21 @@ export const useBulkJobsStore = create<BulkJobsState>()(
           const { opType, jobIds, index, running } = get();
           if (!opType || running || index >= jobIds.length) return;
           await loop();
+        },
+        stop: async () => {
+          const { opType, jobIds, index, running } = get();
+          if (!running) return;
+          set({ stopRequested: true });
+          // Also cancel the step actually in flight right now — otherwise
+          // "stop" only means "don't queue more," and the current job would
+          // keep running server-side to completion regardless.
+          const jobId = jobIds[index];
+          const matchesStore = useMatchesStore.getState();
+          if (opType === "match" && matchesStore.activeRunForJobId === jobId) {
+            await matchesStore.cancelRunMatching();
+          } else if (opType === "update_matched" && matchesStore.activeRescanForJobId === jobId) {
+            await matchesStore.cancelRescanMatched();
+          }
         },
       };
     },

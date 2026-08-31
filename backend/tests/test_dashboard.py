@@ -114,8 +114,9 @@ def test_dashboard_summary_aggregates_seeded_data(storage):
     assert "python" in skill_labels
 
     assert any(j.id == job_id and j.candidate_count == 2 for j in summary.jobs_snapshot)
-    assert len(summary.needs_attention) == 1
-    assert summary.needs_attention[0].reason == "Red-flagged"
+    assert len(summary.missing_info_breakdown) == 1
+    assert summary.missing_info_breakdown[0].label == "work authorization"
+    assert summary.missing_info_breakdown[0].count == 1
 
     inflow_total_folder = sum(d.folder for d in summary.inflow_trend)
     inflow_total_email = sum(d.email for d in summary.inflow_trend)
@@ -248,6 +249,38 @@ def test_recent_activity_ingest_summary_reports_errors(storage):
     assert "2 error(s)" in ingest_items[0].description
 
 
+def test_recent_activity_rescan_matched_entry_links_to_its_job(storage):
+    # A "rescan matched"/"update matched" entry (match_rescan.py) belongs to
+    # one job — Recent Activity should link straight to that job's Match
+    # Results, not fall back to the generic All Candidates link every other
+    # ingest entry (a plain scan, a maintenance run) uses.
+    job_id = str(uuid.uuid4())
+    with storage.session() as session:
+        session.add(Job(id=job_id, title="Backend Engineer", raw_text="Python"))
+        session.flush()
+        session.add(
+            IngestScanHistoryEntry(
+                id=str(uuid.uuid4()),
+                origin="email",
+                source_label="rescan matched: Backend Engineer",
+                resumes_found=5,
+                candidates_created=0,
+                candidates_updated=2,
+                duplicates_skipped=3,
+                error_count=0,
+                job_id=job_id,
+            )
+        )
+        session.commit()
+
+    with storage.session() as session:
+        summary = build_dashboard_summary(session)
+
+    ingest_items = [a for a in summary.recent_activity if a.type == "ingest"]
+    assert len(ingest_items) == 1
+    assert ingest_items[0].job_id == job_id
+
+
 def test_recent_activity_describes_maintenance_task_runs(storage):
     with storage.session() as session:
         session.add(
@@ -319,7 +352,7 @@ def test_dashboard_summary_empty_state_has_no_errors(storage):
         summary = build_dashboard_summary(session)
 
     assert summary.kpis.total_candidates == 0
-    assert summary.needs_attention == []
+    assert summary.missing_info_breakdown == []
     assert len(summary.inflow_trend) == 31  # 30 days + today
 
 

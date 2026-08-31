@@ -21,7 +21,6 @@ from app.models.db import Candidate, EmailAccount, IngestScanHistoryEntry, Job, 
 from app.models.enums import MatchTier
 from app.models.schemas import (
     ActivityItem,
-    AttentionItem,
     DashboardKPIs,
     DashboardSummary,
     InflowDay,
@@ -33,7 +32,7 @@ from app.models.schemas import (
 INFLOW_DAYS = 30
 TOP_SKILLS_LIMIT = 8
 VISA_BREAKDOWN_LIMIT = 8
-NEEDS_ATTENTION_LIMIT = 8
+MISSING_INFO_LIMIT = 8
 RECENT_ACTIVITY_LIMIT = 10
 ORDINAL_TIERS = [MatchTier.POOR, MatchTier.AVERAGE, MatchTier.GOOD, MatchTier.GREAT]
 
@@ -155,37 +154,27 @@ def _jobs_snapshot(session: Session, data_mode: str) -> list[JobSnapshot]:
     return snapshots
 
 
-def _needs_attention(session: Session, data_mode: str) -> list[AttentionItem]:
-    stmt = select(Match)
+def _missing_info_breakdown(session: Session, data_mode: str) -> list[NamedCount]:
+    """How many distinct candidates are missing each kind of info, across
+    any job match — backs the chart that replaced the old "Needs attention"
+    list card (see project-log: that card duplicated what the All
+    Candidates "Needs attention" filter now does better, with the actual
+    candidate list one click away instead of a capped-at-8 preview).
+    Counts by candidate, not by match, so a candidate matched against
+    several jobs with the same gap isn't counted once per job."""
+    stmt = select(Match.candidate_id, Match.missing_info)
     match_condition = candidate_id_condition(Match.candidate_id, data_mode)
     if match_condition is not None:
         stmt = stmt.where(match_condition)
-    matches = session.execute(stmt.order_by(Match.matched_at.desc()).limit(200)).scalars().all()
-    items = []
-    for m in matches:
-        is_red_flag = m.tier == MatchTier.RED_FLAG.value
-        has_missing_info = bool(m.missing_info)
-        if not (is_red_flag or has_missing_info):
-            continue
-        candidate = session.get(Candidate, m.candidate_id)
-        job = session.get(Job, m.job_id)
-        if not candidate or not job:
-            continue
-        reason = "Red-flagged" if is_red_flag else f"Missing: {', '.join(m.missing_info[:2])}"
-        items.append(
-            AttentionItem(
-                match_id=m.id,
-                job_id=job.id,
-                job_title=job.title,
-                candidate_id=candidate.id,
-                candidate_name=f"{candidate.legal_first_name} {candidate.legal_last_name}".strip() or candidate.email or "Unnamed candidate",
-                reason=reason,
-                tier=MatchTier(m.tier),
-            )
-        )
-        if len(items) >= NEEDS_ATTENTION_LIMIT:
-            break
-    return items
+    rows = session.execute(stmt).all()
+    candidates_by_reason: dict[str, set[str]] = {}
+    for candidate_id, missing in rows:
+        for reason in missing or []:
+            reason = reason.strip()
+            if reason:
+                candidates_by_reason.setdefault(reason, set()).add(candidate_id)
+    ranked = sorted(candidates_by_reason.items(), key=lambda kv: len(kv[1]), reverse=True)
+    return [NamedCount(label=reason, count=len(ids)) for reason, ids in ranked[:MISSING_INFO_LIMIT]]
 
 
 def _ingest_description(entry: IngestScanHistoryEntry) -> str:
@@ -212,10 +201,10 @@ def _ingest_description(entry: IngestScanHistoryEntry) -> str:
 # Recent Activity with 20 near-identical lines, the same problem
 # IngestScanHistoryEntry itself was originally built to solve for a single
 # scan's per-candidate rows.
-_RAW_FETCH_LIMIT = RECENT_ACTIVITY_LIMIT * 8
+_RAW_FETCH_LIMIT = 300
 
 
-def _recent_activity(session: Session) -> list[ActivityItem]:
+def _all_activity_items(session: Session) -> list[ActivityItem]:
     matching_runs = session.execute(
         select(SearchHistoryEntry, Job.title)
         .join(Job, Job.id == SearchHistoryEntry.job_id)
@@ -274,11 +263,18 @@ def _recent_activity(session: Session) -> list[ActivityItem]:
         if entry.batch_id:
             ingest_batches.setdefault(entry.batch_id, []).append(entry)
         else:
-            items.append(ActivityItem(type="ingest", timestamp=entry.ran_at, description=_ingest_description(entry)))
+            items.append(
+                ActivityItem(
+                    type="ingest", timestamp=entry.ran_at, description=_ingest_description(entry), job_id=entry.job_id or ""
+                )
+            )
 
     for rows in ingest_batches.values():
         rows.sort(key=lambda e: e.ran_at, reverse=True)
-        sub_items = [ActivityItem(type="ingest", timestamp=e.ran_at, description=_ingest_description(e)) for e in rows]
+        sub_items = [
+            ActivityItem(type="ingest", timestamp=e.ran_at, description=_ingest_description(e), job_id=e.job_id or "")
+            for e in rows
+        ]
         total_checked = sum(e.resumes_found for e in rows)
         total_updated = sum(e.candidates_updated for e in rows)
         items.append(
@@ -290,8 +286,21 @@ def _recent_activity(session: Session) -> list[ActivityItem]:
             )
         )
 
-    merged = sorted(items, key=lambda i: i.timestamp, reverse=True)
-    return merged[:RECENT_ACTIVITY_LIMIT]
+    return sorted(items, key=lambda i: i.timestamp, reverse=True)
+
+
+def _recent_activity(session: Session) -> list[ActivityItem]:
+    return _all_activity_items(session)[:RECENT_ACTIVITY_LIMIT]
+
+
+def recent_activity_page(session: Session, limit: int, offset: int) -> tuple[list[ActivityItem], int]:
+    """Paginated view of the same feed the Dashboard's Recent Activity
+    summarizes to its top 10 — for the "see more activity" page, which
+    needs to page back through everything, not just the glanceable recent
+    slice. `total` reflects everything within _RAW_FETCH_LIMIT, the same
+    cap _all_activity_items already applies per source table."""
+    items = _all_activity_items(session)
+    return items[offset : offset + limit], len(items)
 
 
 def build_dashboard_summary(session: Session, data_mode: str = "all") -> DashboardSummary:
@@ -307,6 +316,6 @@ def build_dashboard_summary(session: Session, data_mode: str = "all") -> Dashboa
         top_skills=_top_skills(session, data_mode),
         visa_breakdown=_visa_breakdown(session, data_mode),
         jobs_snapshot=_jobs_snapshot(session, data_mode),
-        needs_attention=_needs_attention(session, data_mode),
+        missing_info_breakdown=_missing_info_breakdown(session, data_mode),
         recent_activity=_recent_activity(session),
     )

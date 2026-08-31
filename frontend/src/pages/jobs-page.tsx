@@ -30,6 +30,7 @@ import { JobScanMatchPanel } from "../components/jobs/job-scan-match-panel";
 import { JobResultsSummary } from "../components/jobs/job-results-summary";
 import { SortSelect } from "../components/ui/sort-select";
 import { ProgressBar } from "../components/ui/progress-bar";
+import { CancelJobButton } from "../components/ui/cancel-job-button";
 import type { Job } from "../lib/types";
 
 const PAGE_SIZE = 10;
@@ -76,7 +77,15 @@ export function JobsPage() {
   // selected" — both persisted in bulk-jobs-store (not local state) so the
   // loop and its progress survive a tab switch, a refresh, or a
   // logout/login, same as every other long-running action in the app.
-  const { opType: bulkOpType, index: bulkIndex, jobIds: bulkJobIds, running: bulkRunning, start: startBulkOp, resumeIfAny: resumeBulkIfAny } = useBulkJobsStore();
+  const {
+    opType: bulkOpType,
+    index: bulkIndex,
+    jobIds: bulkJobIds,
+    running: bulkRunning,
+    start: startBulkOp,
+    resumeIfAny: resumeBulkIfAny,
+    stop: stopBulkOp,
+  } = useBulkJobsStore();
   const bulkMatching = bulkRunning && bulkOpType === "match";
   const bulkUpdating = bulkRunning && bulkOpType === "update_matched";
   const bulkProgress = bulkOpType ? { done: bulkIndex, total: bulkJobIds.length } : null;
@@ -231,6 +240,9 @@ export function JobsPage() {
             Advanced{companyFilters.size > 0 ? ` (${companyFilters.size})` : ""}
           </Button>
         )}
+      </div>
+
+      <div className="mb-2 flex flex-wrap items-center gap-2">
         {pageJobs.length > 1 && (
           <Button
             variant="secondary"
@@ -267,7 +279,7 @@ export function JobsPage() {
             Update matched ({filtered.length})
           </Button>
         )}
-        <Button icon={<Plus size={15} />} onClick={() => setAdding(true)}>
+        <Button className="ml-auto" icon={<Plus size={15} />} onClick={() => setAdding(true)}>
           Add job description
         </Button>
       </div>
@@ -278,6 +290,9 @@ export function JobsPage() {
             pct={Math.round((bulkProgress.done / bulkProgress.total) * 100)}
             label={`Matching job ${bulkProgress.done} of ${bulkProgress.total}…`}
           />
+          <div className="mt-1 flex justify-end">
+            <CancelJobButton onCancel={stopBulkOp} />
+          </div>
         </div>
       )}
 
@@ -287,6 +302,9 @@ export function JobsPage() {
             pct={Math.round((bulkProgress.done / bulkProgress.total) * 100)}
             label={`Checking job ${bulkProgress.done} of ${bulkProgress.total} for updates…`}
           />
+          <div className="mt-1 flex justify-end">
+            <CancelJobButton onCancel={stopBulkOp} />
+          </div>
         </div>
       )}
 

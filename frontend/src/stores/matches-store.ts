@@ -42,6 +42,8 @@ interface MatchesState {
   rescanMatched: (jobId: string, batchId?: string) => Promise<void>;
   resumeRescanIfAny: () => Promise<void>;
   resumeRunMatchingIfAny: () => Promise<void>;
+  cancelRescanMatched: () => Promise<void>;
+  cancelRunMatching: () => Promise<void>;
 }
 
 // Persisted (matches + topN) so a page refresh on Match Results shows
@@ -67,12 +69,20 @@ export const useMatchesStore = create<MatchesState>()(
                 // match_rescan.py) — deliberately worded so it reads as
                 // "only these specific candidates changed", not a bulk count.
                 push(
-                  `Checked ${r.resumes_found} matched candidate(s) — ${r.candidates_updated} updated, ${r.duplicates_skipped} unchanged` +
+                  (job.cancelled ? "Cancelled — checked " : "Checked ") +
+                    `${r.resumes_found} matched candidate(s) — ${r.candidates_updated} updated, ${r.duplicates_skipped} unchanged` +
                     (r.errors.length ? `, ${r.errors.length} error(s)` : ""),
                   "success",
                 );
               }
-              if (r && r.candidates_updated > 0) {
+              // Only refresh the on-screen list if the viewer is still
+              // looking at this exact job — during a bulk "Update matched"
+              // run (see bulk-jobs-store.ts), followRescanJob completes
+              // for many jobs in sequence, and without this check each one
+              // that found an update would silently swap out whatever job
+              // the user actually has selected on Match Results, making the
+              // page look like it was "freezing" on the wrong results.
+              if (r && r.candidates_updated > 0 && (get().matches[0]?.job_id === jobForId || get().matches.length === 0)) {
                 get().loadMatches(jobForId).catch(() => {});
               }
               return;
@@ -175,6 +185,16 @@ export const useMatchesStore = create<MatchesState>()(
           } catch {
             set({ activeRunJobId: null, activeRunForJobId: null });
           }
+        },
+        cancelRescanMatched: async () => {
+          const { activeRescanJobId } = get();
+          if (!activeRescanJobId) return;
+          await api.cancelScanJob(activeRescanJobId);
+        },
+        cancelRunMatching: async () => {
+          const { activeRunJobId } = get();
+          if (!activeRunJobId) return;
+          await api.cancelScanJob(activeRunJobId);
         },
       };
     },

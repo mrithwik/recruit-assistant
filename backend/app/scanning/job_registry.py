@@ -52,6 +52,17 @@ class ScanJob:
     # mid-run (a bare `asyncio.create_task(...)` with no kept reference is a
     # classic asyncio footgun: nothing stops the GC from reclaiming it).
     task: Any = None
+    # Cooperative cancellation — set by request_cancel(), read by the
+    # running task's own loop (run_scan's resume-by-resume loop,
+    # match_rescan's per-candidate loop, bulk-jobs-store's client-side
+    # loop) at its next natural checkpoint. Nothing kills the task
+    # forcibly: partial work already committed stays committed, and the
+    # job finishes as "completed, cancelled=True" with whatever it had —
+    # "stop and keep progress," not "undo," per the scope decided for this
+    # feature (a true "discard everything from this run" would need
+    # per-run row tagging, deliberately not built here).
+    cancel_requested: bool = False
+    cancelled: bool = False
 
 
 _jobs: dict[str, ScanJob] = {}
@@ -103,6 +114,7 @@ def complete_job(job_id: str, result: ScanResult) -> None:
     job = _jobs[job_id]
     job.status = "completed"
     job.result = result
+    job.cancelled = job.cancel_requested
     job.completed_at = datetime.utcnow()
     if job.scope_key and _active_scopes.get(job.scope_key) == job_id:
         del _active_scopes[job.scope_key]
@@ -117,3 +129,21 @@ def fail_job(job_id: str, error: str) -> None:
     if job.scope_key and _active_scopes.get(job.scope_key) == job_id:
         del _active_scopes[job.scope_key]
     _prune()
+
+
+def request_cancel(job_id: str) -> bool:
+    """Marks a running job for cancellation at its next checkpoint. Returns
+    False if the job doesn't exist or has already finished — the caller
+    (the cancel route) treats that as "nothing to cancel," not an error,
+    since a job finishing right as the user clicks Cancel is a normal race,
+    not a bug."""
+    job = _jobs.get(job_id)
+    if not job or job.status != "running":
+        return False
+    job.cancel_requested = True
+    return True
+
+
+def is_cancel_requested(job_id: str) -> bool:
+    job = _jobs.get(job_id)
+    return bool(job and job.cancel_requested)

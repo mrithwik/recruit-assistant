@@ -220,6 +220,11 @@ class IngestScanHistoryEntry(Base):
     # Same batching mechanism as SearchHistoryEntry.batch_id, for a Jobs-page
     # bulk "Update matched"/"Update selected" run.
     batch_id: Mapped[str] = mapped_column(String, nullable=True, default=None)
+    # Set only for a "rescan matched" run (match_rescan.py) — the job this
+    # entry's matched candidates belong to, so Recent Activity can link
+    # straight to that job's Match Results instead of falling back to the
+    # generic "/app/candidates" every other ingest entry links to.
+    job_id: Mapped[str] = mapped_column(String, nullable=True, default=None)
 
 
 class EmailAccount(Base):

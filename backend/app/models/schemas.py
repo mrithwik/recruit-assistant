@@ -236,6 +236,11 @@ class ScanJobOut(BaseModel):
     result: ScanResult | None = None
     progress: ScanResult | None = None
     error: str | None = None
+    # True once the job actually stopped early from a cancel request (see
+    # job_registry.request_cancel) — status is still "completed", since
+    # whatever it found up to that point is real, saved progress, not a
+    # failure.
+    cancelled: bool = False
 
 
 class MaintenanceTaskOut(BaseModel):
@@ -363,6 +368,20 @@ class SearchHistoryOut(BaseModel):
     criteria_version: int
 
 
+class IngestScanLogOut(BaseModel):
+    id: str
+    origin: str
+    source_label: str
+    resumes_found: int
+    candidates_created: int
+    candidates_updated: int
+    duplicates_skipped: int
+    error_count: int
+    ran_at: datetime
+    batch_id: str | None
+    job_id: str | None
+
+
 # --- Draft email ---
 
 class DraftEmailRequest(BaseModel):
@@ -444,21 +463,11 @@ class JobSnapshot(BaseModel):
     last_matched_at: datetime | None
 
 
-class AttentionItem(BaseModel):
-    match_id: str
-    job_id: str
-    job_title: str
-    candidate_id: str
-    candidate_name: str
-    reason: str
-    tier: MatchTier
-
-
 class ActivityItem(BaseModel):
     type: str  # "scan" (a matching run) | "candidate" | "ingest" (a folder/email scan — see IngestScanHistoryEntry)
     timestamp: datetime
     description: str
-    job_id: str = ""  # set when type == "scan" — links to that job's results/history
+    job_id: str = ""  # set when type == "scan" — links to that job's Match Results
     candidate_id: str = ""  # set when type == "candidate" — links to the candidate detail page
     # Populated only for a collapsed bulk-run entry (see SearchHistoryEntry/
     # IngestScanHistoryEntry.batch_id and dashboard/service.py's
@@ -466,6 +475,11 @@ class ActivityItem(BaseModel):
     # all" or "Update matched (N)" run shows as one row with the individual
     # per-job outcomes available on expand rather than flooding the feed.
     sub_items: list["ActivityItem"] = Field(default_factory=list)
+
+
+class ActivityLogPage(BaseModel):
+    items: list[ActivityItem]
+    total: int
 
 
 class DashboardSummary(BaseModel):
@@ -476,7 +490,7 @@ class DashboardSummary(BaseModel):
     top_skills: list[NamedCount]
     visa_breakdown: list[NamedCount]
     jobs_snapshot: list[JobSnapshot]
-    needs_attention: list[AttentionItem]
+    missing_info_breakdown: list[NamedCount]
     recent_activity: list[ActivityItem]
 
 

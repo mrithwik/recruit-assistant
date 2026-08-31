@@ -76,6 +76,18 @@ def test_rescan_candidate_finds_no_new_resumes_in_unchanged_folder(client, tmp_p
     assert rescan_job["result"]["candidates_created"] == 0
     assert rescan_job["result"]["duplicates_skipped"] == 1
 
+    # Regression: record_ingest_scan() only added+flushed, never committed —
+    # `with storage.session() as session:` rolls back on exit with nothing
+    # committed, so both this rescan's and the original scan's Recent
+    # Activity rows were silently discarded even though the scan/rescan
+    # themselves completed successfully and candidates persisted fine
+    # (those get their own commit inside ingest_service.run_scan). Querying
+    # through a fresh request (a new session) is what catches this — a
+    # same-session assertion wouldn't see the rollback.
+    activity = client.get("/api/v1/dashboard/summary", headers=headers).json()["recent_activity"]
+    ingest_items = [a for a in activity if a["type"] == "ingest"]
+    assert len(ingest_items) == 2
+
 
 def test_rescan_unknown_candidate_404s(client):
     token = _token(client)

@@ -27,6 +27,7 @@ from app.scanning.job_registry import (
     complete_job,
     create_job,
     fail_job,
+    is_cancel_requested,
     update_progress,
 )
 from app.storage.base import BaseStorageBackend
@@ -43,6 +44,7 @@ def _job_out(job) -> ScanJobOut:
         result=job.result,
         progress=job.progress,
         error=job.error,
+        cancelled=job.cancelled,
     )
 
 
@@ -82,6 +84,8 @@ async def rescan_matched_candidates(
             )
             with storage.session() as session:
                 for candidate_id in candidate_ids:
+                    if is_cancel_requested(rjob.id):
+                        break
                     candidate = session.get(Candidate, candidate_id)
                     checked += 1
                     if not candidate or not candidate.email:
@@ -120,8 +124,10 @@ async def rescan_matched_candidates(
                         duplicates_skipped=final.duplicates_skipped,
                         error_count=len(final.errors),
                         batch_id=batch_id,
+                        job_id=job_id,
                     ),
                 )
+                session.commit()
             complete_job(rjob.id, final)
         except Exception as exc:  # noqa: BLE001 - surfaced via job status, not raised into a dead background task
             fail_job(rjob.id, str(exc))

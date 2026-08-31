@@ -19,6 +19,7 @@ from app.scanning.job_registry import (
     create_job,
     fail_job,
     get_job,
+    is_cancel_requested,
     update_progress,
 )
 from app.storage.base import BaseStorageBackend
@@ -35,6 +36,7 @@ def _job_out(job) -> ScanJobOut:
         result=job.result,
         progress=job.progress,
         error=job.error,
+        cancelled=job.cancelled,
     )
 
 
@@ -65,7 +67,9 @@ async def run_task(
     async def _run() -> None:
         try:
             with storage.session() as session:
-                result = await task.run(session, settings, lambda r: update_progress(job.id, r))
+                result = await task.run(
+                    session, settings, lambda r: update_progress(job.id, r), lambda: is_cancel_requested(job.id)
+                )
                 # Same Recent Activity feed as scans (see IngestScanHistoryEntry)
                 # so a maintenance run isn't invisible outside this one page —
                 # origin="maintenance" branches to different wording in
@@ -83,6 +87,7 @@ async def run_task(
                         error_count=len(result.errors),
                     ),
                 )
+                session.commit()
             complete_job(job.id, result)
         except Exception as exc:  # noqa: BLE001 - surfaced via job status, not raised into a dead background task
             fail_job(job.id, str(exc))

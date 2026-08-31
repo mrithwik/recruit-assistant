@@ -24,6 +24,7 @@ import { Button } from "../components/ui/button";
 import { MatchBadge } from "../components/ui/match-badge";
 import { SourceBadges } from "../components/ui/source-badges";
 import { ProgressBar, useSimulatedProgress } from "../components/ui/progress-bar";
+import { CancelJobButton } from "../components/ui/cancel-job-button";
 import type { CandidateDetail, ResumeSourceInfo } from "../lib/types";
 
 // Scoped to one person's messages, so this is normally quick — a low
@@ -51,6 +52,7 @@ export function CandidateDetailPage() {
     resumeCandidateRescanIfAny,
     rescanningCandidate,
     candidateRescanProgress,
+    cancelCandidateRescan,
     candidateRescanForId,
   } = useCandidatesStore();
   const rescanning = rescanningCandidate && candidateRescanForId === id;
@@ -160,12 +162,17 @@ export function CandidateDetailPage() {
             remainingSeconds={rescanRemaining}
             overrun={rescanOverrun}
           />
-          {candidateRescanProgress && (
-            <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-              {candidateRescanProgress.resumes_found} message(s) checked so far
-              {candidateRescanProgress.errors.length > 0 && ` — ${candidateRescanProgress.errors.length} error(s)`}
-            </p>
-          )}
+          <div className="mt-1 flex items-center justify-between">
+            {candidateRescanProgress ? (
+              <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                {candidateRescanProgress.resumes_found} message(s) checked so far
+                {candidateRescanProgress.errors.length > 0 && ` — ${candidateRescanProgress.errors.length} error(s)`}
+              </p>
+            ) : (
+              <span />
+            )}
+            <CancelJobButton onCancel={cancelCandidateRescan} />
+          </div>
         </div>
       )}
 

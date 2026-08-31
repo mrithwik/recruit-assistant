@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { AlertTriangle, CheckCircle2, Clock, FolderPlus, Inbox, Mail, Plus, ScanSearch, X } from "lucide-react";
+import { Link } from "react-router-dom";
+import { AlertTriangle, CheckCircle2, Clock, FolderPlus, History, Inbox, Mail, Plus, ScanSearch, X } from "lucide-react";
 import { DateRangePicker } from "../components/ui/date-range-picker";
 import { useScanStore } from "../stores/scan-store";
 import { useToastStore } from "../stores/toast-store";
@@ -10,6 +11,7 @@ import { Input } from "../components/ui/input";
 import { InfoTooltip } from "../components/ui/info-tooltip";
 import { Toggle } from "../components/ui/toggle";
 import { ProgressBar, useSimulatedProgress } from "../components/ui/progress-bar";
+import { CancelJobButton } from "../components/ui/cancel-job-button";
 import { TimingBadge } from "../components/ui/timing-badge";
 import { SampleDataGenerator } from "../components/scan/sample-data-generator";
 import { DangerZone } from "../components/scan/danger-zone";
@@ -48,6 +50,7 @@ export function ScanPage() {
     lastResult,
     scanning,
     scanProgress,
+    cancelActiveScan,
     lastGenerated,
     scheduledSources,
     fetchScheduledSources,
@@ -125,6 +128,14 @@ export function ScanPage() {
       <PageHeader
         title="Scan Sources"
         description="Three steps: pick where to look, set a date range, then scan. Local folders and connected mailboxes both work — alone or together."
+        action={
+          <Link
+            to="/app/scan/logs"
+            className="flex items-center gap-1 text-xs font-medium text-indigo-600 hover:underline dark:text-indigo-400"
+          >
+            <History size={13} /> View scan activity log
+          </Link>
+        }
       />
 
       {mockMode?.expose_toggle && (
@@ -320,13 +331,18 @@ export function ScanPage() {
           {scanning && (
             <div className="mt-3">
               <ProgressBar pct={pct} label="Scanning and matching candidate identities…" remainingSeconds={remainingSeconds} overrun={overrun} />
-              {scanProgress && (
-                <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400" aria-live="polite">
-                  {scanProgress.resumes_found} resume(s) processed so far — {scanProgress.candidates_created} new,{" "}
-                  {scanProgress.candidates_updated} updated, {scanProgress.duplicates_skipped} already scanned
-                  {scanProgress.errors.length > 0 && `, ${scanProgress.errors.length} error(s)`}
-                </p>
-              )}
+              <div className="mt-2 flex items-center justify-between">
+                {scanProgress ? (
+                  <p className="text-xs text-zinc-500 dark:text-zinc-400" aria-live="polite">
+                    {scanProgress.resumes_found} resume(s) processed so far — {scanProgress.candidates_created} new,{" "}
+                    {scanProgress.candidates_updated} updated, {scanProgress.duplicates_skipped} already scanned
+                    {scanProgress.errors.length > 0 && `, ${scanProgress.errors.length} error(s)`}
+                  </p>
+                ) : (
+                  <span />
+                )}
+                <CancelJobButton onCancel={cancelActiveScan} />
+              </div>
             </div>
           )}
         </div>

@@ -48,6 +48,7 @@ class BaseStorageBackend(ABC):
         experience_min: float | None = None,
         experience_max: float | None = None,
         data_mode: str = "all",
+        needs_attention: bool = False,
     ) -> tuple[list[Candidate], int]: ...
 
     @abstractmethod

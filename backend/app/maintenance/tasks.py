@@ -30,7 +30,7 @@ from app.maintenance.email_link_backfill import backfill_email_links
 from app.models.db import EmailAccount, ResumeSource
 from app.models.schemas import ScanResult
 
-TaskFn = Callable[[Session, Settings, Callable[[ScanResult], None]], Awaitable[ScanResult]]
+TaskFn = Callable[[Session, Settings, Callable[[ScanResult], None], Callable[[], bool]], Awaitable[ScanResult]]
 PendingCountFn = Callable[[Session], int]
 
 
