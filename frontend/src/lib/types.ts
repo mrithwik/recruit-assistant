@@ -289,6 +289,7 @@ export interface ActivityItem {
   description: string;
   job_id: string;
   candidate_id: string;
+  sub_items: ActivityItem[];
 }
 
 export interface DashboardSummary {

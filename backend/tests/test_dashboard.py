@@ -5,7 +5,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.dashboard.service import build_dashboard_summary
-from app.models.db import Candidate, IngestScanHistoryEntry, Job, Match, ResumeSource
+from app.models.db import Candidate, IngestScanHistoryEntry, Job, Match, ResumeSource, SearchHistoryEntry
 
 
 def _seed(storage) -> str:
@@ -270,6 +270,48 @@ def test_recent_activity_describes_maintenance_task_runs(storage):
     ingest_items = [a for a in summary.recent_activity if a.type == "ingest"]
     assert len(ingest_items) == 1
     assert ingest_items[0].description == "Ran “Backfill email links” — 607 checked, 590 new, 17 already seen"
+
+
+def test_recent_activity_collapses_bulk_match_batch_into_one_expandable_entry(storage):
+    # A Jobs-page "Match all" run writes one SearchHistoryEntry per job, all
+    # sharing a batch_id (see stores/bulk-jobs-store.ts + routes/matches.py)
+    # — recent_activity must collapse those into one row with the per-job
+    # detail available as sub_items, not flood the feed with one line per
+    # job in the batch.
+    batch_id = str(uuid.uuid4())
+    job1_id = str(uuid.uuid4())
+    job2_id = str(uuid.uuid4())
+    with storage.session() as session:
+        session.add_all(
+            [
+                Job(id=job1_id, title="Backend Engineer", raw_text="Python"),
+                Job(id=job2_id, title="Frontend Engineer", raw_text="React"),
+            ]
+        )
+        session.flush()
+        session.add_all(
+            [
+                SearchHistoryEntry(id=str(uuid.uuid4()), job_id=job1_id, candidate_count=5, batch_id=batch_id),
+                SearchHistoryEntry(id=str(uuid.uuid4()), job_id=job2_id, candidate_count=3, batch_id=batch_id),
+                # An unrelated single-job run (no batch_id) stays its own row.
+                SearchHistoryEntry(id=str(uuid.uuid4()), job_id=job1_id, candidate_count=1),
+            ]
+        )
+        session.commit()
+
+    with storage.session() as session:
+        summary = build_dashboard_summary(session)
+
+    scan_items = [a for a in summary.recent_activity if a.type == "scan"]
+    assert len(scan_items) == 2  # one collapsed batch entry + one standalone entry
+
+    batch_item = next(a for a in scan_items if a.sub_items)
+    assert batch_item.description == "Matched 2 job(s) — 8 candidate match(es) total"
+    assert len(batch_item.sub_items) == 2
+    assert {s.job_id for s in batch_item.sub_items} == {job1_id, job2_id}
+
+    standalone = next(a for a in scan_items if not a.sub_items)
+    assert "1 candidate" in standalone.description
 
 
 def test_dashboard_summary_empty_state_has_no_errors(storage):

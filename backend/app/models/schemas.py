@@ -460,6 +460,12 @@ class ActivityItem(BaseModel):
     description: str
     job_id: str = ""  # set when type == "scan" — links to that job's results/history
     candidate_id: str = ""  # set when type == "candidate" — links to the candidate detail page
+    # Populated only for a collapsed bulk-run entry (see SearchHistoryEntry/
+    # IngestScanHistoryEntry.batch_id and dashboard/service.py's
+    # _recent_activity) — one sub-item per job in that batch, so a "Match
+    # all" or "Update matched (N)" run shows as one row with the individual
+    # per-job outcomes available on expand rather than flooding the feed.
+    sub_items: list["ActivityItem"] = Field(default_factory=list)
 
 
 class DashboardSummary(BaseModel):

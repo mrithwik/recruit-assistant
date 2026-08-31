@@ -190,6 +190,12 @@ class SearchHistoryEntry(Base):
     sources_scanned: Mapped[dict] = mapped_column(JSON, default=dict)  # {folders: [...], mailboxes: [...]}
     candidate_count: Mapped[int] = mapped_column(default=0)
     criteria_version: Mapped[int] = mapped_column(default=1)
+    # Set only for a run kicked off as part of a Jobs-page bulk "Match all"/
+    # "Match selected" (see stores/bulk-jobs-store.ts, which mints one id per
+    # loop and passes it to every job's run) — lets Recent Activity collapse
+    # the whole batch into one expandable entry instead of one row per job.
+    # Null for a normal single-job "Run matching" click.
+    batch_id: Mapped[str] = mapped_column(String, nullable=True, default=None)
 
 
 class IngestScanHistoryEntry(Base):
@@ -211,6 +217,9 @@ class IngestScanHistoryEntry(Base):
     duplicates_skipped: Mapped[int] = mapped_column(default=0)
     error_count: Mapped[int] = mapped_column(default=0)
     ran_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+    # Same batching mechanism as SearchHistoryEntry.batch_id, for a Jobs-page
+    # bulk "Update matched"/"Update selected" run.
+    batch_id: Mapped[str] = mapped_column(String, nullable=True, default=None)
 
 
 class EmailAccount(Base):

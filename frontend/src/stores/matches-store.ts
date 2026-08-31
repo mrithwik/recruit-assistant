@@ -37,9 +37,9 @@ interface MatchesState {
   activeRunForJobId: string | null;
   setTopN: (n: number) => void;
   loadMatches: (jobId: string) => Promise<void>;
-  runMatching: (jobId: string) => Promise<Match[]>;
+  runMatching: (jobId: string, batchId?: string) => Promise<Match[]>;
   flag: (matchId: string, color: "green" | "red", note: string) => Promise<void>;
-  rescanMatched: (jobId: string) => Promise<void>;
+  rescanMatched: (jobId: string, batchId?: string) => Promise<void>;
   resumeRescanIfAny: () => Promise<void>;
   resumeRunMatchingIfAny: () => Promise<void>;
 }
@@ -136,16 +136,16 @@ export const useMatchesStore = create<MatchesState>()(
           const result = await api.listMatches(jobId, get().topN, useDataModeStore.getState().dataMode);
           set({ matches: result.matches, loading: false, lastElapsedSeconds: result.elapsed_seconds, lastLoadWasFullRun: false });
         },
-        runMatching: async (jobId) => {
-          const job = await api.runMatching(jobId, get().topN, useDataModeStore.getState().dataMode);
+        runMatching: async (jobId, batchId) => {
+          const job = await api.runMatching(jobId, get().topN, useDataModeStore.getState().dataMode, batchId);
           return followRunMatchingJob(job.id, jobId);
         },
         flag: async (matchId, color, note) => {
           const updated = await api.flagMatch(matchId, color, note);
           set((s) => ({ matches: s.matches.map((m) => (m.id === matchId ? updated : m)) }));
         },
-        rescanMatched: async (jobId) => {
-          const job = await api.rescanMatched(jobId);
+        rescanMatched: async (jobId, batchId) => {
+          const job = await api.rescanMatched(jobId, batchId);
           await followRescanJob(job.id, jobId);
         },
         resumeRescanIfAny: async () => {

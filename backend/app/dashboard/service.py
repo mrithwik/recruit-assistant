@@ -188,22 +188,76 @@ def _needs_attention(session: Session, data_mode: str) -> list[AttentionItem]:
     return items
 
 
+def _ingest_description(entry: IngestScanHistoryEntry) -> str:
+    parts = [f"{entry.candidates_created} new"]
+    if entry.candidates_updated:
+        parts.append(f"{entry.candidates_updated} updated")
+    if entry.duplicates_skipped:
+        parts.append(f"{entry.duplicates_skipped} already seen")
+    if entry.error_count:
+        parts.append(f"{entry.error_count} error(s)")
+
+    if entry.origin == "maintenance":
+        return f"Ran “{entry.source_label}” — {entry.resumes_found} checked, {', '.join(parts)}"
+    source_kind = "email" if entry.origin == "email" else "folder"
+    label = f" ({entry.source_label})" if entry.source_label else ""
+    return f"Scanned {source_kind}{label} — {entry.resumes_found} found, {', '.join(parts)}"
+
+
+# A Jobs-page bulk "Match all"/"Update matched (N)" run (see
+# stores/bulk-jobs-store.ts) writes one history row per job, tagged with a
+# shared batch_id — grabbing more raw rows than the final feed limit and
+# collapsing same-batch rows into one entry (before truncating to
+# RECENT_ACTIVITY_LIMIT) is what keeps a 20-job bulk run from flooding
+# Recent Activity with 20 near-identical lines, the same problem
+# IngestScanHistoryEntry itself was originally built to solve for a single
+# scan's per-candidate rows.
+_RAW_FETCH_LIMIT = RECENT_ACTIVITY_LIMIT * 8
+
+
 def _recent_activity(session: Session) -> list[ActivityItem]:
     matching_runs = session.execute(
         select(SearchHistoryEntry, Job.title)
         .join(Job, Job.id == SearchHistoryEntry.job_id)
         .order_by(SearchHistoryEntry.run_at.desc())
-        .limit(RECENT_ACTIVITY_LIMIT)
+        .limit(_RAW_FETCH_LIMIT)
     ).all()
-    matching_items = [
-        ActivityItem(
-            type="scan",
-            timestamp=entry.run_at,
-            description=f"Matched {entry.candidate_count} candidate(s) against “{title}”",
-            job_id=entry.job_id,
+
+    items: list[ActivityItem] = []
+    matching_batches: dict[str, list[tuple[SearchHistoryEntry, str]]] = {}
+    for entry, title in matching_runs:
+        if entry.batch_id:
+            matching_batches.setdefault(entry.batch_id, []).append((entry, title))
+        else:
+            items.append(
+                ActivityItem(
+                    type="scan",
+                    timestamp=entry.run_at,
+                    description=f"Matched {entry.candidate_count} candidate(s) against “{title}”",
+                    job_id=entry.job_id,
+                )
+            )
+
+    for rows in matching_batches.values():
+        rows.sort(key=lambda r: r[0].run_at, reverse=True)
+        sub_items = [
+            ActivityItem(
+                type="scan",
+                timestamp=entry.run_at,
+                description=f"Matched {entry.candidate_count} candidate(s) against “{title}”",
+                job_id=entry.job_id,
+            )
+            for entry, title in rows
+        ]
+        total_candidates = sum(entry.candidate_count for entry, _ in rows)
+        items.append(
+            ActivityItem(
+                type="scan",
+                timestamp=rows[0][0].run_at,
+                description=f"Matched {len(rows)} job(s) — {total_candidates} candidate match(es) total",
+                sub_items=sub_items,
+            )
         )
-        for entry, title in matching_runs
-    ]
 
     # One row per completed ingest scan (folder or email) — e.g. "Scanned
     # Gmail (name@example.com) — 623 found, 607 new, 16 updated". Replaces
@@ -212,28 +266,31 @@ def _recent_activity(session: Session) -> list[ActivityItem]:
     # of candidates at once used to make the whole feed just that one scan
     # repeated, with no indication a scan was even what happened.
     ingest_scans = session.execute(
-        select(IngestScanHistoryEntry).order_by(IngestScanHistoryEntry.ran_at.desc()).limit(RECENT_ACTIVITY_LIMIT)
+        select(IngestScanHistoryEntry).order_by(IngestScanHistoryEntry.ran_at.desc()).limit(_RAW_FETCH_LIMIT)
     ).scalars().all()
-    ingest_items = []
+
+    ingest_batches: dict[str, list[IngestScanHistoryEntry]] = {}
     for entry in ingest_scans:
-        parts = [f"{entry.candidates_created} new"]
-        if entry.candidates_updated:
-            parts.append(f"{entry.candidates_updated} updated")
-        if entry.duplicates_skipped:
-            parts.append(f"{entry.duplicates_skipped} already seen")
-        if entry.error_count:
-            parts.append(f"{entry.error_count} error(s)")
-
-        if entry.origin == "maintenance":
-            description = f"Ran “{entry.source_label}” — {entry.resumes_found} checked, {', '.join(parts)}"
+        if entry.batch_id:
+            ingest_batches.setdefault(entry.batch_id, []).append(entry)
         else:
-            source_kind = "email" if entry.origin == "email" else "folder"
-            label = f" ({entry.source_label})" if entry.source_label else ""
-            description = f"Scanned {source_kind}{label} — {entry.resumes_found} found, {', '.join(parts)}"
+            items.append(ActivityItem(type="ingest", timestamp=entry.ran_at, description=_ingest_description(entry)))
 
-        ingest_items.append(ActivityItem(type="ingest", timestamp=entry.ran_at, description=description))
+    for rows in ingest_batches.values():
+        rows.sort(key=lambda e: e.ran_at, reverse=True)
+        sub_items = [ActivityItem(type="ingest", timestamp=e.ran_at, description=_ingest_description(e)) for e in rows]
+        total_checked = sum(e.resumes_found for e in rows)
+        total_updated = sum(e.candidates_updated for e in rows)
+        items.append(
+            ActivityItem(
+                type="ingest",
+                timestamp=rows[0].ran_at,
+                description=f"Checked matched candidates for {len(rows)} job(s) — {total_checked} checked, {total_updated} updated",
+                sub_items=sub_items,
+            )
+        )
 
-    merged = sorted(matching_items + ingest_items, key=lambda i: i.timestamp, reverse=True)
+    merged = sorted(items, key=lambda i: i.timestamp, reverse=True)
     return merged[:RECENT_ACTIVITY_LIMIT]
 
 

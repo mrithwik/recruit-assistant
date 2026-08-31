@@ -10,7 +10,7 @@ matched candidates specifically changed)."""
 import asyncio
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 
 from app.config import Settings
@@ -49,6 +49,7 @@ def _job_out(job) -> ScanJobOut:
 @router.post("/{job_id}/rescan-matched", response_model=ScanJobOut, status_code=202)
 async def rescan_matched_candidates(
     job_id: str,
+    batch_id: str | None = Query(None, description="Groups this run with others in the same bulk operation for Recent Activity"),
     storage: BaseStorageBackend = Depends(get_storage),
     llm: LLMClient = Depends(get_llm_client),
     settings: Settings = Depends(get_settings),
@@ -118,6 +119,7 @@ async def rescan_matched_candidates(
                         candidates_updated=final.candidates_updated,
                         duplicates_skipped=final.duplicates_skipped,
                         error_count=len(final.errors),
+                        batch_id=batch_id,
                     ),
                 )
             complete_job(rjob.id, final)

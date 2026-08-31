@@ -113,17 +113,20 @@ export const api = {
   listCandidateSources: (id: string) =>
     request<import("./types").ResumeSourceInfo[]>(`/candidates/${id}/sources`),
   scanAll: () => request<import("./types").ScanJob>("/scan/all", { method: "POST" }),
-  rescanMatched: (jobId: string) =>
-    request<import("./types").ScanJob>(`/matches/${jobId}/rescan-matched`, { method: "POST" }),
+  rescanMatched: (jobId: string, batchId?: string) =>
+    request<import("./types").ScanJob>(
+      `/matches/${jobId}/rescan-matched${batchId ? `?batch_id=${batchId}` : ""}`,
+      { method: "POST" },
+    ),
   rescanCandidate: (id: string) => request<import("./types").ScanJob>(`/candidates/${id}/rescan`, { method: "POST" }),
   getCandidateSourceText: (id: string, sourceId: string) =>
     request<{ origin: string; source_ref: string; date_submitted: string; text: string }>(
       `/candidates/${id}/sources/${sourceId}/text`,
     ),
 
-  runMatching: (jobId: string, topN: number, dataMode?: string) =>
+  runMatching: (jobId: string, topN: number, dataMode?: string, batchId?: string) =>
     request<import("./types").ScanJob>(
-      `/matches/run/${jobId}?top_n=${topN}${dataMode ? `&data_mode=${dataMode}` : ""}`,
+      `/matches/run/${jobId}?top_n=${topN}${dataMode ? `&data_mode=${dataMode}` : ""}${batchId ? `&batch_id=${batchId}` : ""}`,
       { method: "POST" },
     ),
   listMatches: (jobId: string, topN: number, dataMode?: string) =>

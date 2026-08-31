@@ -63,6 +63,7 @@ async def run_matching(
     job_id: str,
     top_n: int = Query(20, ge=1, le=200),
     data_mode: str = Query("all", description="'all', 'real', or 'mock' — restricts the candidate pool matched against"),
+    batch_id: str | None = Query(None, description="Groups this run with others in the same bulk operation for Recent Activity"),
     storage: BaseStorageBackend = Depends(get_storage),
     llm: LLMClient = Depends(get_llm_client),
     settings: Settings = Depends(get_settings),
@@ -177,6 +178,7 @@ async def run_matching(
                         candidate_count=matched_count,
                         criteria_version=job_criteria_version,
                         sources_scanned={"note": f"matched against candidate pool at run time (data_mode={data_mode})"},
+                        batch_id=batch_id,
                     ),
                 )
                 session.commit()

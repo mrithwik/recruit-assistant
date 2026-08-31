@@ -14,6 +14,12 @@ interface BulkJobsState {
   successCount: number;
   skippedCount: number;
   failures: string[];
+  // One id per bulk run, sent with every step (see routes/matches.py's
+  // batch_id param) so Recent Activity collapses the whole run into one
+  // expandable entry instead of one row per job. Persisted so a resumed
+  // loop (after a refresh) keeps grouping under the same batch instead of
+  // splitting into "before" and "after" entries.
+  batchId: string | null;
   start: (op: BulkJobsOp, jobIds: string[]) => Promise<void>;
   resumeIfAny: () => Promise<void>;
 }
@@ -29,20 +35,20 @@ function jobTitleFor(jobId: string): string {
 // reload) — reattach to that instead of firing a second request, which
 // would otherwise 409 against the backend's still-running job for the same
 // scope.
-async function runOneStep(op: BulkJobsOp, jobId: string): Promise<"success" | "skipped" | "failed"> {
+async function runOneStep(op: BulkJobsOp, jobId: string, batchId: string | null): Promise<"success" | "skipped" | "failed"> {
   const matchesStore = useMatchesStore.getState();
   try {
     if (op === "match") {
       if (matchesStore.activeRunForJobId === jobId) {
         await matchesStore.resumeRunMatchingIfAny();
       } else {
-        await matchesStore.runMatching(jobId);
+        await matchesStore.runMatching(jobId, batchId ?? undefined);
       }
     } else {
       if (matchesStore.activeRescanForJobId === jobId) {
         await matchesStore.resumeRescanIfAny();
       } else {
-        await matchesStore.rescanMatched(jobId);
+        await matchesStore.rescanMatched(jobId, batchId ?? undefined);
       }
     }
     return "success";
@@ -67,9 +73,9 @@ export const useBulkJobsStore = create<BulkJobsState>()(
         set({ running: true });
         try {
           while (get().index < get().jobIds.length) {
-            const { jobIds, index, opType } = get();
+            const { jobIds, index, opType, batchId } = get();
             const jobId = jobIds[index];
-            const outcome = await runOneStep(opType as BulkJobsOp, jobId);
+            const outcome = await runOneStep(opType as BulkJobsOp, jobId, batchId);
             set((s) => ({
               index: s.index + 1,
               successCount: outcome === "success" ? s.successCount + 1 : s.successCount,
@@ -93,7 +99,7 @@ export const useBulkJobsStore = create<BulkJobsState>()(
             );
           }
         } finally {
-          set({ running: false, opType: null, jobIds: [], index: 0, successCount: 0, skippedCount: 0, failures: [] });
+          set({ running: false, opType: null, jobIds: [], index: 0, successCount: 0, skippedCount: 0, failures: [], batchId: null });
         }
       }
 
@@ -105,9 +111,21 @@ export const useBulkJobsStore = create<BulkJobsState>()(
         successCount: 0,
         skippedCount: 0,
         failures: [],
+        batchId: null,
         start: async (op, jobIds) => {
           if (jobIds.length === 0 || get().running) return;
-          set({ opType: op, jobIds, index: 0, successCount: 0, skippedCount: 0, failures: [] });
+          set({
+            opType: op,
+            jobIds,
+            index: 0,
+            successCount: 0,
+            skippedCount: 0,
+            failures: [],
+            // Only worth grouping when there's actually more than one run —
+            // a single-job "bulk" action behaves identically to clicking
+            // that job's own button, so it stays its own ungrouped entry.
+            batchId: jobIds.length > 1 ? crypto.randomUUID() : null,
+          });
           await loop();
         },
         resumeIfAny: async () => {
@@ -126,6 +144,7 @@ export const useBulkJobsStore = create<BulkJobsState>()(
         successCount: s.successCount,
         skippedCount: s.skippedCount,
         failures: s.failures,
+        batchId: s.batchId,
       }),
     },
   ),
