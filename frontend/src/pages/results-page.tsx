@@ -80,6 +80,7 @@ export function ResultsPage() {
     rescanMatchedProgress,
     activeRescanForJobId,
     resumeRescanIfAny,
+    resumeRunMatchingIfAny,
   } = useMatchesStore();
   const push = useToastStore((s) => s.push);
   const navigate = useNavigate();
@@ -100,9 +101,12 @@ export function ResultsPage() {
 
   useEffect(() => {
     if (jobs.length === 0) fetchJobs();
-    // Reattaches to an already-running "Check for updates" job if one was
-    // started before a refresh/reopen (see matches-store's activeRescanJobId).
+    // Reattaches to an already-running "Check for updates" job, or a still-
+    // running "Run matching" job, if one was started before a
+    // refresh/reopen/logout (see matches-store's activeRescanJobId /
+    // activeRunJobId).
     resumeRescanIfAny().catch(() => {});
+    resumeRunMatchingIfAny().catch(() => {});
   }, []);
 
   useEffect(() => {

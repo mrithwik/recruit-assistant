@@ -21,12 +21,21 @@ interface MatchesState {
   rescanMatchedProgress: ScanResult | null;
   activeRescanJobId: string | null;
   activeRescanForJobId: string | null;
+  // "Run matching" — also a background job (see routes/matches.py) purely so
+  // it survives a tab switch, a refresh, or a logout/login, same as every
+  // other long-running action. No live progress from the backend (a single
+  // job's match run is fast enough that the UI's simulated progress bar is
+  // enough); activeRunForJobId is what lets a page know a job it cares
+  // about is still in flight after a refresh.
+  activeRunJobId: string | null;
+  activeRunForJobId: string | null;
   setTopN: (n: number) => void;
   loadMatches: (jobId: string) => Promise<void>;
   runMatching: (jobId: string) => Promise<Match[]>;
   flag: (matchId: string, color: "green" | "red", note: string) => Promise<void>;
   rescanMatched: (jobId: string) => Promise<void>;
   resumeRescanIfAny: () => Promise<void>;
+  resumeRunMatchingIfAny: () => Promise<void>;
 }
 
 // Persisted (matches + topN) so a page refresh on Match Results shows
@@ -74,6 +83,27 @@ export const useMatchesStore = create<MatchesState>()(
         }
       }
 
+      async function followRunMatchingJob(jobId: string, jobForId: string): Promise<Match[]> {
+        set({ loading: true, activeRunJobId: jobId, activeRunForJobId: jobForId, lastLoadWasFullRun: true });
+        try {
+          while (true) {
+            const job = await api.getScanJob(jobId);
+            if (job.status === "completed") {
+              const result = await api.listMatches(jobForId, get().topN, useDataModeStore.getState().dataMode);
+              set({ matches: result.matches, lastElapsedSeconds: result.elapsed_seconds });
+              return result.matches;
+            }
+            if (job.status === "failed") {
+              useToastStore.getState().push(job.error ?? "Matching failed.", "error");
+              return [];
+            }
+            await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+          }
+        } finally {
+          set({ loading: false, activeRunJobId: null, activeRunForJobId: null });
+        }
+      }
+
       return {
         matches: [],
         topN: 20,
@@ -84,6 +114,8 @@ export const useMatchesStore = create<MatchesState>()(
         rescanMatchedProgress: null,
         activeRescanJobId: null,
         activeRescanForJobId: null,
+        activeRunJobId: null,
+        activeRunForJobId: null,
         setTopN: (n) => set({ topN: n }),
         loadMatches: async (jobId) => {
           set({ loading: true });
@@ -91,10 +123,8 @@ export const useMatchesStore = create<MatchesState>()(
           set({ matches: result.matches, loading: false, lastElapsedSeconds: result.elapsed_seconds, lastLoadWasFullRun: false });
         },
         runMatching: async (jobId) => {
-          set({ loading: true });
-          const result = await api.runMatching(jobId, get().topN, useDataModeStore.getState().dataMode);
-          set({ matches: result.matches, loading: false, lastElapsedSeconds: result.elapsed_seconds, lastLoadWasFullRun: true });
-          return result.matches;
+          const job = await api.runMatching(jobId, get().topN, useDataModeStore.getState().dataMode);
+          return followRunMatchingJob(job.id, jobId);
         },
         flag: async (matchId, color, note) => {
           const updated = await api.flagMatch(matchId, color, note);
@@ -118,11 +148,32 @@ export const useMatchesStore = create<MatchesState>()(
             set({ activeRescanJobId: null, activeRescanForJobId: null });
           }
         },
+        resumeRunMatchingIfAny: async () => {
+          const { activeRunJobId, activeRunForJobId, loading } = get();
+          if (!activeRunJobId || !activeRunForJobId || loading) return;
+          try {
+            const job = await api.getScanJob(activeRunJobId);
+            if (job.status === "running") {
+              await followRunMatchingJob(activeRunJobId, activeRunForJobId);
+            } else {
+              set({ activeRunJobId: null, activeRunForJobId: null });
+            }
+          } catch {
+            set({ activeRunJobId: null, activeRunForJobId: null });
+          }
+        },
       };
     },
     {
       name: "recruit-assistant-matches-store",
-      partialize: (s) => ({ matches: s.matches, topN: s.topN, activeRescanJobId: s.activeRescanJobId, activeRescanForJobId: s.activeRescanForJobId }),
+      partialize: (s) => ({
+        matches: s.matches,
+        topN: s.topN,
+        activeRescanJobId: s.activeRescanJobId,
+        activeRescanForJobId: s.activeRescanForJobId,
+        activeRunJobId: s.activeRunJobId,
+        activeRunForJobId: s.activeRunForJobId,
+      }),
     },
   ),
 );

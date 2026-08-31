@@ -122,7 +122,7 @@ export const api = {
     ),
 
   runMatching: (jobId: string, topN: number, dataMode?: string) =>
-    request<import("./types").MatchListResult>(
+    request<import("./types").ScanJob>(
       `/matches/run/${jobId}?top_n=${topN}${dataMode ? `&data_mode=${dataMode}` : ""}`,
       { method: "POST" },
     ),

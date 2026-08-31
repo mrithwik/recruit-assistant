@@ -1,12 +1,11 @@
-import { useState } from "react";
+import { useEffect } from "react";
 import { Sparkles } from "lucide-react";
-import { api } from "../../lib/api";
 import { useToastStore } from "../../stores/toast-store";
+import { useMaintenanceStore, useTaskRun } from "../../stores/maintenance-store";
 import { Button } from "../ui/button";
 import { ProgressBar, useSimulatedProgress } from "../ui/progress-bar";
 import type { MaintenanceTask, ScanResult } from "../../lib/types";
 
-const POLL_INTERVAL_MS = 1500;
 // No fixed size for a maintenance task ahead of time (it depends on how
 // much existing data needs touching), so this is a rough floor just to
 // give the simulated bar some initial motion — the real counts underneath
@@ -23,37 +22,35 @@ function summarize(result: ScanResult): string {
 // One task's label/description/Run button/progress — shared by the full
 // "Data maintenance" panel on Scan Sources and the Dashboard's "Updates
 // available" banner (which only shows tasks with pending work), so the
-// run/poll/progress logic exists in exactly one place.
+// run/poll/progress logic exists in exactly one place. Backed by
+// maintenance-store (persisted per task id) rather than local state, so a
+// run started here is still visible after navigating away and back, a
+// refresh, or a logout/login — and stays in sync between the two surfaces
+// that render the same task.
 export function MaintenanceTaskRow({ task, onDone }: { task: MaintenanceTask; onDone?: () => void }) {
   const push = useToastStore((s) => s.push);
-  const [running, setRunning] = useState(false);
-  const [liveProgress, setLiveProgress] = useState<ScanResult | null>(null);
-  const [lastResult, setLastResult] = useState<ScanResult | null>(null);
+  const { jobId, running, progress, lastResult } = useTaskRun(task.id);
+  const { run: runTask, resumeIfAny } = useMaintenanceStore();
   const { pct, remainingSeconds, overrun } = useSimulatedProgress(ESTIMATED_SECONDS, running);
 
+  useEffect(() => {
+    if (jobId && !running) {
+      resumeIfAny(task.id)
+        .then(() => onDone?.())
+        .catch(() => {});
+    }
+    // Only re-check on mount / task change — jobId and running are read
+    // once to decide whether a resume is needed, not tracked as deps (that
+    // would re-fire this effect on every progress tick).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [task.id]);
+
   async function run() {
-    setRunning(true);
-    setLiveProgress(null);
     try {
-      const job = await api.runMaintenanceTask(task.id);
-      let current = job;
-      while (current.status === "running") {
-        await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
-        current = await api.getScanJob(current.id);
-        setLiveProgress(current.progress ?? null);
-      }
-      if (current.status === "failed") {
-        push(current.error ?? "Maintenance task failed.", "error");
-      } else if (current.result) {
-        setLastResult(current.result);
-        push("Done — " + summarize(current.result), "success");
-        onDone?.();
-      }
+      await runTask(task.id);
+      onDone?.();
     } catch (e) {
       push(String(e), "error");
-    } finally {
-      setRunning(false);
-      setLiveProgress(null);
     }
   }
 
@@ -76,11 +73,11 @@ export function MaintenanceTaskRow({ task, onDone }: { task: MaintenanceTask; on
       {running && (
         <div>
           <ProgressBar pct={pct} label="Working…" remainingSeconds={remainingSeconds} overrun={overrun} />
-          {liveProgress && (
+          {progress && (
             <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-              {liveProgress.resumes_found} checked so far — {liveProgress.candidates_created} updated
-              {liveProgress.duplicates_skipped > 0 && `, ${liveProgress.duplicates_skipped} skipped`}
-              {liveProgress.errors.length > 0 && `, ${liveProgress.errors.length} error(s)`}
+              {progress.resumes_found} checked so far — {progress.candidates_created} updated
+              {progress.duplicates_skipped > 0 && `, ${progress.duplicates_skipped} skipped`}
+              {progress.errors.length > 0 && `, ${progress.errors.length} error(s)`}
             </p>
           )}
         </div>

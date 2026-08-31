@@ -36,6 +36,14 @@ interface CandidatesState {
   rescanningAll: boolean;
   rescanAllProgress: ScanResult | null;
   rescanAllJobId: string | null;
+  // Candidate Detail's "Check for updates" — scoped to one person's own
+  // sources (see routes/candidate_rescan.py). Persisted the same way, so it
+  // survives navigating off the candidate's page, a refresh, or a
+  // logout/login rather than resetting the moment the page unmounts.
+  rescanningCandidate: boolean;
+  candidateRescanProgress: ScanResult | null;
+  candidateRescanJobId: string | null;
+  candidateRescanForId: string | null;
   fetchCandidates: () => Promise<void>;
   fetchFacets: () => Promise<void>;
   setFilters: (filters: { dateStart?: string; dateEnd?: string; source?: string }) => void;
@@ -49,6 +57,8 @@ interface CandidatesState {
   clearAdvancedFilters: () => void;
   rescanAll: () => Promise<void>;
   resumeRescanAllIfAny: () => Promise<void>;
+  rescanCandidate: (id: string) => Promise<ScanResult | null>;
+  resumeCandidateRescanIfAny: (id: string) => Promise<ScanResult | null>;
 }
 
 function toggleIn(list: string[], value: string): string[] {
@@ -93,6 +103,26 @@ export const useCandidatesStore = create<CandidatesState>()(
         }
       }
 
+      async function followCandidateRescanJob(jobId: string, forId: string): Promise<ScanResult | null> {
+        set({ rescanningCandidate: true, candidateRescanJobId: jobId, candidateRescanForId: forId, candidateRescanProgress: null });
+        try {
+          while (true) {
+            const job = await api.getScanJob(jobId);
+            if (job.status === "completed") {
+              return job.result ?? null;
+            }
+            if (job.status === "failed") {
+              useToastStore.getState().push(job.error ?? "Rescan failed.", "error");
+              return null;
+            }
+            set({ candidateRescanProgress: job.progress ?? null });
+            await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+          }
+        } finally {
+          set({ rescanningCandidate: false, candidateRescanJobId: null, candidateRescanForId: null, candidateRescanProgress: null });
+        }
+      }
+
       return {
         candidates: [],
         total: 0,
@@ -109,6 +139,10 @@ export const useCandidatesStore = create<CandidatesState>()(
         rescanningAll: false,
         rescanAllProgress: null,
         rescanAllJobId: null,
+        rescanningCandidate: false,
+        candidateRescanProgress: null,
+        candidateRescanJobId: null,
+        candidateRescanForId: null,
         fetchCandidates: async () => {
           const {
             dateStart,
@@ -185,11 +219,34 @@ export const useCandidatesStore = create<CandidatesState>()(
             set({ rescanAllJobId: null });
           }
         },
+        rescanCandidate: async (id) => {
+          const job = await api.rescanCandidate(id);
+          return followCandidateRescanJob(job.id, id);
+        },
+        resumeCandidateRescanIfAny: async (id) => {
+          const { candidateRescanJobId, candidateRescanForId, rescanningCandidate } = get();
+          if (!candidateRescanJobId || candidateRescanForId !== id || rescanningCandidate) return null;
+          try {
+            const job = await api.getScanJob(candidateRescanJobId);
+            if (job.status === "running") {
+              return followCandidateRescanJob(candidateRescanJobId, id);
+            }
+            set({ candidateRescanJobId: null, candidateRescanForId: null });
+            return null;
+          } catch {
+            set({ candidateRescanJobId: null, candidateRescanForId: null });
+            return null;
+          }
+        },
       };
     },
     {
       name: "recruit-assistant-candidates-store",
-      partialize: (s) => ({ rescanAllJobId: s.rescanAllJobId }),
+      partialize: (s) => ({
+        rescanAllJobId: s.rescanAllJobId,
+        candidateRescanJobId: s.candidateRescanJobId,
+        candidateRescanForId: s.candidateRescanForId,
+      }),
     },
   ),
 );

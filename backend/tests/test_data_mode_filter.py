@@ -5,6 +5,7 @@ mock email fixtures always use the literal source_ref prefix
 "mock-demo-mailbox:" (see scanning/email_ingestor.py's MockEmailIngestor),
 which is what this pins."""
 
+import time
 import uuid
 from datetime import datetime
 
@@ -12,6 +13,16 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.models.db import Candidate, ResumeSource
+
+
+def _wait_for_job(client, headers, job_id, timeout=10):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        job = client.get(f"/api/v1/scan/jobs/{job_id}", headers=headers).json()
+        if job["status"] != "running":
+            return job
+        time.sleep(0.1)
+    raise TimeoutError("job did not finish in time")
 
 
 def _make(email, source_ref, origin="email"):
@@ -108,7 +119,11 @@ def test_run_matching_scopes_candidate_pool_by_data_mode(client):
     job_id = job_resp.json()["id"]
 
     resp = client.post(f"/api/v1/matches/run/{job_id}?data_mode=real", headers=headers)
-    assert resp.status_code == 200
-    matched_ids = {m["candidate"]["id"] for m in resp.json()["matches"]}
+    assert resp.status_code == 202
+    job = _wait_for_job(client, headers, resp.json()["id"])
+    assert job["status"] == "completed"
+
+    matches_resp = client.get(f"/api/v1/matches/{job_id}", headers=headers)
+    matched_ids = {m["candidate"]["id"] for m in matches_resp.json()["matches"]}
     assert matched_ids == {real_id}
     assert mock_id not in matched_ids

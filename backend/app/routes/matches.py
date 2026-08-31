@@ -1,6 +1,7 @@
 """Candidate Results tab (2.5) — run matching for a job, list/filter results,
 top-N selection, and green/red flag toggling."""
 
+import asyncio
 import time
 import uuid
 from datetime import datetime
@@ -15,11 +16,24 @@ from app.matching.concurrency import bounded_gather
 from app.matching.llm_client import LLMClient
 from app.matching.matcher import match_job_against_pool, score_to_tier
 from app.models.db import Candidate, Job, Match, SearchHistoryEntry
-from app.models.schemas import FlagIn, JobMatchSummary, MatchListOut, MatchOut, MatchReasons, MatchSummaryItem
+from app.models.schemas import FlagIn, JobMatchSummary, MatchListOut, MatchOut, MatchReasons, MatchSummaryItem, ScanJobOut, ScanResult
 from app.routes.candidates import _batch_email_links, _batch_origins, _to_out
+from app.scanning.job_registry import ScanAlreadyRunningError, complete_job, create_job, fail_job
 from app.storage.base import BaseStorageBackend
 
 router = APIRouter(prefix="/api/v1/matches", tags=["matches"])
+
+
+def _job_out(job) -> ScanJobOut:
+    return ScanJobOut(
+        id=job.id,
+        status=job.status,
+        started_at=job.started_at,
+        completed_at=job.completed_at,
+        result=job.result,
+        progress=job.progress,
+        error=job.error,
+    )
 
 
 def _match_to_out(match: Match, candidate: Candidate, origins: list[str], email_link: str = "") -> MatchOut:
@@ -44,7 +58,7 @@ async def _embedding_for(llm: LLMClient, model: str, candidate: Candidate) -> tu
     return candidate.id, embedding
 
 
-@router.post("/run/{job_id}", response_model=MatchListOut)
+@router.post("/run/{job_id}", response_model=ScanJobOut, status_code=202)
 async def run_matching(
     job_id: str,
     top_n: int = Query(20, ge=1, le=200),
@@ -53,104 +67,134 @@ async def run_matching(
     llm: LLMClient = Depends(get_llm_client),
     settings: Settings = Depends(get_settings),
 ):
-    start_time = time.monotonic()
+    """Runs as a background job (same job_registry every scan/rescan uses)
+    rather than blocking the request for the whole run — a real candidate
+    pool + judge pass can take long enough that holding one HTTP connection
+    open the whole time risks a browser/proxy timeout, and (the reason this
+    changed from a synchronous call) gives the frontend a job id to poll,
+    so "Run matching" survives a tab switch, a refresh, or a logout/login —
+    the same guarantee scans and rescans already had. The actual match rows
+    land in the DB as soon as they're scored; the client re-fetches them via
+    GET /matches/{job_id} once the job reports "completed" rather than the
+    job's own result carrying the full match list."""
     with storage.session() as session:
         job = session.get(Job, job_id)
         if not job:
             raise HTTPException(404, "Job not found")
+        job_raw_text = job.raw_text
+        job_criteria_version = job.criteria_version
 
-        pool_stmt = select(Candidate)
-        candidate_condition = candidate_id_condition(Candidate.id, data_mode)
-        if candidate_condition is not None:
-            pool_stmt = pool_stmt.where(candidate_condition)
-        candidates = list(session.execute(pool_stmt).scalars())
-        if not candidates:
-            return MatchListOut(matches=[], elapsed_seconds=round(time.monotonic() - start_time, 3))
+    scope_key = f"run_matching:{job_id}"
+    try:
+        rjob = create_job(scope_key)
+    except ScanAlreadyRunningError as exc:
+        raise HTTPException(409, str(exc)) from exc
 
-        job_embedding = await llm.embed(settings.embedding_model, job.raw_text)
+    async def _run() -> None:
+        try:
+            with storage.session() as session:
+                pool_stmt = select(Candidate)
+                candidate_condition = candidate_id_condition(Candidate.id, data_mode)
+                if candidate_condition is not None:
+                    pool_stmt = pool_stmt.where(candidate_condition)
+                candidates = list(session.execute(pool_stmt).scalars())
+                if not candidates:
+                    complete_job(
+                        rjob.id,
+                        ScanResult(resumes_found=0, candidates_created=0, candidates_updated=0, duplicates_skipped=0),
+                    )
+                    return
 
-        # Candidates ingested after the embedding-cache change (see
-        # ingest_service.py) already carry `embedding` — reuse it instead of
-        # re-embedding the whole pool on every single "Run matching" click,
-        # which used to be the dominant cost at real volume (10k candidates
-        # = 10k sequential embed calls, every run). Only candidates missing
-        # one (ingested before this existed) get embedded here, concurrently.
-        needs_embedding = [c for c in candidates if not c.embedding]
-        if needs_embedding:
-            computed = await bounded_gather(
-                needs_embedding,
-                lambda c: _embedding_for(llm, settings.embedding_model, c),
-                settings.max_concurrent_llm_calls,
-            )
-            embedding_by_id = dict(computed)
-            for c in needs_embedding:
-                c.embedding = embedding_by_id[c.id]
-            session.flush()
+                job_embedding = await llm.embed(settings.embedding_model, job_raw_text)
 
-        pool = [
-            {
-                "id": c.id,
-                "embedding": c.embedding,
-                "resume_text": c.raw_parsed_profile.get("raw_text", "") if c.raw_parsed_profile else "",
-                "profile": _profile_from_candidate(c),
-                "summary": c.semantic_summary,
-            }
-            for c in candidates
-        ]
+                # Candidates ingested after the embedding-cache change (see
+                # ingest_service.py) already carry `embedding` — reuse it
+                # instead of re-embedding the whole pool on every single "Run
+                # matching" click, which used to be the dominant cost at real
+                # volume (10k candidates = 10k sequential embed calls, every
+                # run). Only candidates missing one get embedded here,
+                # concurrently.
+                needs_embedding = [c for c in candidates if not c.embedding]
+                if needs_embedding:
+                    computed = await bounded_gather(
+                        needs_embedding,
+                        lambda c: _embedding_for(llm, settings.embedding_model, c),
+                        settings.max_concurrent_llm_calls,
+                    )
+                    embedding_by_id = dict(computed)
+                    for c in needs_embedding:
+                        c.embedding = embedding_by_id[c.id]
+                    session.flush()
 
-        results = await match_job_against_pool(
-            llm=llm,
-            triage_model=settings.llm_triage_model,
-            scoring_model=settings.llm_scoring_model,
-            judge_model=settings.llm_judge_model,
-            job_text=job.raw_text,
-            job_embedding=job_embedding,
-            candidate_pool=pool,
-            top_n=top_n,
-            max_concurrent=settings.max_concurrent_llm_calls,
-        )
+                pool = [
+                    {
+                        "id": c.id,
+                        "embedding": c.embedding,
+                        "resume_text": c.raw_parsed_profile.get("raw_text", "") if c.raw_parsed_profile else "",
+                        "profile": _profile_from_candidate(c),
+                        "summary": c.semantic_summary,
+                    }
+                    for c in candidates
+                ]
 
-        candidates_by_id = {c.id: c for c in candidates}
-        matched_ids = [r["candidate_id"] for r in results[:top_n]]
-        origins_by_candidate = _batch_origins(session, matched_ids)
-        email_links_by_candidate = _batch_email_links(session, matched_ids)
-
-        out = []
-        for r in results[:top_n]:
-            tier = score_to_tier(r["score"], has_red_flag=False)
-            match = Match(
-                id=str(uuid.uuid4()),
-                job_id=job_id,
-                candidate_id=r["candidate_id"],
-                score=r["score"],
-                tier=tier.value,
-                reasons={"matched": r["matched"], "gaps": r["gaps"]},
-                missing_info=r["missing_info"],
-                flags=[],
-                judge_notes=r["judge_notes"],
-                criteria_version=job.criteria_version,
-                matched_at=datetime.utcnow(),
-            )
-            session.add(match)
-            candidate = candidates_by_id[r["candidate_id"]]
-            out.append(
-                _match_to_out(
-                    match, candidate, origins_by_candidate.get(candidate.id, []), email_links_by_candidate.get(candidate.id, "")
+                results = await match_job_against_pool(
+                    llm=llm,
+                    triage_model=settings.llm_triage_model,
+                    scoring_model=settings.llm_scoring_model,
+                    judge_model=settings.llm_judge_model,
+                    job_text=job_raw_text,
+                    job_embedding=job_embedding,
+                    candidate_pool=pool,
+                    top_n=top_n,
+                    max_concurrent=settings.max_concurrent_llm_calls,
                 )
-            )
 
-        storage.record_search_history(
-            session,
-            SearchHistoryEntry(
-                id=str(uuid.uuid4()),
-                job_id=job_id,
-                candidate_count=len(out),
-                criteria_version=job.criteria_version,
-                sources_scanned={"note": f"matched against candidate pool at run time (data_mode={data_mode})"},
-            ),
-        )
-        session.commit()
-        return MatchListOut(matches=out, elapsed_seconds=round(time.monotonic() - start_time, 3))
+                candidates_by_id = {c.id: c for c in candidates}
+                matched_count = 0
+                for r in results[:top_n]:
+                    tier = score_to_tier(r["score"], has_red_flag=False)
+                    match = Match(
+                        id=str(uuid.uuid4()),
+                        job_id=job_id,
+                        candidate_id=r["candidate_id"],
+                        score=r["score"],
+                        tier=tier.value,
+                        reasons={"matched": r["matched"], "gaps": r["gaps"]},
+                        missing_info=r["missing_info"],
+                        flags=[],
+                        judge_notes=r["judge_notes"],
+                        criteria_version=job_criteria_version,
+                        matched_at=datetime.utcnow(),
+                    )
+                    session.add(match)
+                    matched_count += 1
+
+                storage.record_search_history(
+                    session,
+                    SearchHistoryEntry(
+                        id=str(uuid.uuid4()),
+                        job_id=job_id,
+                        candidate_count=matched_count,
+                        criteria_version=job_criteria_version,
+                        sources_scanned={"note": f"matched against candidate pool at run time (data_mode={data_mode})"},
+                    ),
+                )
+                session.commit()
+
+            complete_job(
+                rjob.id,
+                ScanResult(
+                    resumes_found=len(candidates),
+                    candidates_created=matched_count,
+                    candidates_updated=0,
+                    duplicates_skipped=0,
+                ),
+            )
+        except Exception as exc:  # noqa: BLE001 - surfaced via job status, not raised into a dead background task
+            fail_job(rjob.id, str(exc))
+
+    rjob.task = asyncio.create_task(_run())
+    return _job_out(rjob)
 
 
 @router.get("/summary/{job_id}", response_model=JobMatchSummary)

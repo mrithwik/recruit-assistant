@@ -8,7 +8,6 @@ import { Button } from "../ui/button";
 import { ProgressBar, useSimulatedProgress } from "../ui/progress-bar";
 
 type Mode = "existing_data" | "full_rescan";
-type Phase = "idle" | "scanning" | "matching";
 
 const MATCHING_ESTIMATED_SECONDS = 15;
 const SCAN_ESTIMATED_SECONDS = 20;
@@ -17,32 +16,42 @@ const SCAN_ESTIMATED_SECONDS = 20;
 // placed directly on the job card rather than requiring a trip to the
 // Criteria or Scan Sources tabs — this is what makes Job Descriptions the
 // operational hub instead of just a list.
+//
+// Progress is derived entirely from the global scan-store/matches-store
+// (both job-registry-backed, both persisted) rather than local component
+// state — a local "phase" used to reset to idle the moment this card
+// unmounted (switching tabs, or just collapsing the card), even though the
+// backend job was still running. Deriving from the stores instead means the
+// progress bar reappears correctly on remount, a page refresh, or a
+// logout/login, exactly like every other long-running action in the app.
 export function JobScanMatchPanel({ jobId }: { jobId: string }) {
   const [mode, setMode] = useState<Mode>("existing_data");
-  const [phase, setPhase] = useState<Phase>("idle");
   const { folderPaths, selectedAccountIds, scanFolders, scanEmail, scanning, scanProgress } = useScanStore();
   const runMatching = useMatchesStore((s) => s.runMatching);
   const matchingLoading = useMatchesStore((s) => s.loading);
+  const activeRunForJobId = useMatchesStore((s) => s.activeRunForJobId);
   const push = useToastStore((s) => s.push);
+  const isMatchingThisJob = matchingLoading && activeRunForJobId === jobId;
   const { pct: matchPct, remainingSeconds: matchRemaining, overrun: matchOverrun } = useSimulatedProgress(
     MATCHING_ESTIMATED_SECONDS,
-    phase === "matching",
+    isMatchingThisJob,
   );
   const { pct: scanPct, remainingSeconds: scanRemaining, overrun: scanOverrun } = useSimulatedProgress(
     SCAN_ESTIMATED_SECONDS,
-    phase === "scanning",
+    scanning,
   );
 
   const hasConfiguredSources = folderPaths.length > 0 || selectedAccountIds.length > 0;
-  const running = phase !== "idle";
+  // Scanning isn't job-scoped (it scans folders/mailboxes, not a specific
+  // job) so this card can only say "a scan is running," not "a scan I
+  // started" — matching current behavior everywhere else scanning shows up.
+  const running = scanning || isMatchingThisJob;
 
   async function run() {
-    setPhase(mode === "full_rescan" ? "scanning" : "matching");
     try {
       if (mode === "full_rescan") {
         if (folderPaths.length > 0) await scanFolders();
         if (selectedAccountIds.length > 0) await scanEmail();
-        setPhase("matching");
       }
       const matches = await runMatching(jobId);
       const count = matches?.length ?? 0;
@@ -61,8 +70,6 @@ export function JobScanMatchPanel({ jobId }: { jobId: string }) {
       }
     } catch (e) {
       push(String(e), "error");
-    } finally {
-      setPhase("idle");
     }
   }
 
@@ -101,7 +108,7 @@ export function JobScanMatchPanel({ jobId }: { jobId: string }) {
         <Button
           size="sm"
           icon={mode === "existing_data" ? <Database size={13} /> : <Play size={13} />}
-          loading={running || matchingLoading}
+          loading={running}
           disabled={mode === "full_rescan" && !hasConfiguredSources}
           onClick={run}
         >
@@ -112,7 +119,7 @@ export function JobScanMatchPanel({ jobId }: { jobId: string }) {
         </Link>
       </div>
 
-      {phase === "scanning" && scanning && (
+      {scanning && (
         <div className="mt-3">
           <ProgressBar pct={scanPct} label="Scanning sources…" remainingSeconds={scanRemaining} overrun={scanOverrun} />
           {scanProgress && (
@@ -123,7 +130,7 @@ export function JobScanMatchPanel({ jobId }: { jobId: string }) {
           )}
         </div>
       )}
-      {phase === "matching" && (
+      {!scanning && isMatchingThisJob && (
         <div className="mt-3">
           <ProgressBar pct={matchPct} label="Scoring candidates…" remainingSeconds={matchRemaining} overrun={matchOverrun} />
         </div>

@@ -17,6 +17,8 @@ import {
 } from "lucide-react";
 import { useJobsStore } from "../stores/jobs-store";
 import { useMatchesStore } from "../stores/matches-store";
+import { useScanStore } from "../stores/scan-store";
+import { useBulkJobsStore } from "../stores/bulk-jobs-store";
 import { useToastStore } from "../stores/toast-store";
 import { PageHeader } from "../components/ui/page-header";
 import { Card, CardDashed } from "../components/ui/card";
@@ -70,24 +72,25 @@ export function JobsPage() {
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [companyFilters, setCompanyFilters] = useState<Set<string>>(new Set());
-  // Bulk "match selected"/"match all" — N independent matching runs (each
-  // already a fast, atomic backend call), looped from here rather than as
-  // one trackable background job. A refresh mid-run only loses the
-  // "remaining jobs in the queue" bookkeeping, not any already-completed
-  // job's results (those persisted server-side the moment each call
-  // returned) — a smaller gap than a scan losing all progress, so this
-  // doesn't need the job_registry survive-refresh treatment those get.
-  const [bulkMatching, setBulkMatching] = useState(false);
-  const [bulkProgress, setBulkProgress] = useState<{ done: number; total: number } | null>(null);
-  // "Update matched candidates" bulk action — same sequential-loop pattern
-  // as matchJobs above, but calling the bounded rescan-matched endpoint per
-  // job instead of a full match run. Jobs with no matches yet are skipped
-  // (there's nothing to rescan) rather than surfaced as failures.
-  const [bulkUpdating, setBulkUpdating] = useState(false);
-  const [bulkUpdateProgress, setBulkUpdateProgress] = useState<{ done: number; total: number } | null>(null);
+  // Bulk "match selected"/"match all" and "update matched"/"update
+  // selected" — both persisted in bulk-jobs-store (not local state) so the
+  // loop and its progress survive a tab switch, a refresh, or a
+  // logout/login, same as every other long-running action in the app.
+  const { opType: bulkOpType, index: bulkIndex, jobIds: bulkJobIds, running: bulkRunning, start: startBulkOp, resumeIfAny: resumeBulkIfAny } = useBulkJobsStore();
+  const bulkMatching = bulkRunning && bulkOpType === "match";
+  const bulkUpdating = bulkRunning && bulkOpType === "update_matched";
+  const bulkProgress = bulkOpType ? { done: bulkIndex, total: bulkJobIds.length } : null;
 
   useEffect(() => {
     fetchJobs().catch((e) => push(String(e), "error"));
+    // Reattaches to a still-running scan, "Run matching" job, or bulk
+    // match/update loop (started from this page or elsewhere) if one was in
+    // flight before a refresh/reopen/logout — see scan-store/matches-store/
+    // bulk-jobs-store.
+    useScanStore.getState().resumeActiveScanIfAny().catch(() => {});
+    useMatchesStore.getState().resumeRunMatchingIfAny().catch(() => {});
+    useMatchesStore.getState().resumeRescanIfAny().catch(() => {});
+    resumeBulkIfAny().catch(() => {});
   }, []);
 
   const allCompanies = useMemo(
@@ -187,67 +190,12 @@ export function JobsPage() {
     setSelectedIds((prev) => (prev.size === filtered.length ? new Set() : new Set(filtered.map((j) => j.id))));
   }
 
-  async function matchJobs(jobIds: string[]) {
-    if (jobIds.length === 0) return;
-    setBulkMatching(true);
-    setBulkProgress({ done: 0, total: jobIds.length });
-    const failures: string[] = [];
-    let totalMatched = 0;
-    try {
-      for (let i = 0; i < jobIds.length; i++) {
-        try {
-          const matches = await useMatchesStore.getState().runMatching(jobIds[i]);
-          totalMatched += matches?.length ?? 0;
-        } catch {
-          const job = jobs.find((j) => j.id === jobIds[i]);
-          failures.push(job?.title ?? jobIds[i]);
-        }
-        setBulkProgress({ done: i + 1, total: jobIds.length });
-      }
-      push(
-        `Matched ${jobIds.length - failures.length} job(s) — ${totalMatched} candidate match(es) total` +
-          (failures.length ? `. Failed: ${failures.join(", ")}` : ""),
-        failures.length ? "error" : "success",
-      );
-    } finally {
-      setBulkMatching(false);
-      setBulkProgress(null);
-    }
+  function matchJobs(jobIds: string[]) {
+    startBulkOp("match", jobIds).catch((e) => push(String(e), "error"));
   }
 
-  async function updateMatchedForJobs(jobIds: string[]) {
-    if (jobIds.length === 0) return;
-    setBulkUpdating(true);
-    setBulkUpdateProgress({ done: 0, total: jobIds.length });
-    let updatedCount = 0;
-    let skipped = 0;
-    const failures: string[] = [];
-    try {
-      for (let i = 0; i < jobIds.length; i++) {
-        try {
-          await useMatchesStore.getState().rescanMatched(jobIds[i]);
-          updatedCount += 1;
-        } catch (e) {
-          const msg = String(e);
-          if (msg.includes("No matches yet")) {
-            skipped += 1;
-          } else {
-            const job = jobs.find((j) => j.id === jobIds[i]);
-            failures.push(job?.title ?? jobIds[i]);
-          }
-        }
-        setBulkUpdateProgress({ done: i + 1, total: jobIds.length });
-      }
-      push(
-        `Checked matched candidates for ${updatedCount} job(s)` +
-          (skipped ? `, skipped ${skipped} with no matches yet` : "") +
-          (failures.length ? `. Failed: ${failures.join(", ")}` : ""),
-        failures.length ? "error" : "success",
-      );
-    } finally {
-      setBulkUpdating(false);
-      setBulkUpdateProgress(null);
-    }
+  function updateMatchedForJobs(jobIds: string[]) {
+    startBulkOp("update_matched", jobIds).catch((e) => push(String(e), "error"));
   }
 
   return (
@@ -333,11 +281,11 @@ export function JobsPage() {
         </div>
       )}
 
-      {bulkUpdating && bulkUpdateProgress && (
+      {bulkUpdating && bulkProgress && (
         <div className="mb-4">
           <ProgressBar
-            pct={Math.round((bulkUpdateProgress.done / bulkUpdateProgress.total) * 100)}
-            label={`Checking job ${bulkUpdateProgress.done} of ${bulkUpdateProgress.total} for updates…`}
+            pct={Math.round((bulkProgress.done / bulkProgress.total) * 100)}
+            label={`Checking job ${bulkProgress.done} of ${bulkProgress.total} for updates…`}
           />
         </div>
       )}

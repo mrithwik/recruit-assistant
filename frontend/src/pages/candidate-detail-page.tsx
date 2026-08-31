@@ -18,14 +18,14 @@ import {
 } from "lucide-react";
 import { api } from "../lib/api";
 import { useToastStore } from "../stores/toast-store";
+import { useCandidatesStore } from "../stores/candidates-store";
 import { Card } from "../components/ui/card";
 import { Button } from "../components/ui/button";
 import { MatchBadge } from "../components/ui/match-badge";
 import { SourceBadges } from "../components/ui/source-badges";
 import { ProgressBar, useSimulatedProgress } from "../components/ui/progress-bar";
-import type { CandidateDetail, ResumeSourceInfo, ScanResult } from "../lib/types";
+import type { CandidateDetail, ResumeSourceInfo } from "../lib/types";
 
-const RESCAN_POLL_INTERVAL_MS = 1500;
 // Scoped to one person's messages, so this is normally quick — a low
 // estimate just gives the bar initial motion rather than sitting at 0%.
 const RESCAN_ESTIMATED_SECONDS = 8;
@@ -43,8 +43,17 @@ export function CandidateDetailPage() {
   const [openSourceId, setOpenSourceId] = useState<string | null>(null);
   const [sourceText, setSourceText] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
-  const [rescanning, setRescanning] = useState(false);
-  const [rescanProgress, setRescanProgress] = useState<ScanResult | null>(null);
+  // Persisted in candidates-store (not local state) so "Check for updates"
+  // survives navigating away and back, a refresh, or a logout/login rather
+  // than resetting the moment this page unmounts.
+  const {
+    rescanCandidate,
+    resumeCandidateRescanIfAny,
+    rescanningCandidate,
+    candidateRescanProgress,
+    candidateRescanForId,
+  } = useCandidatesStore();
+  const rescanning = rescanningCandidate && candidateRescanForId === id;
   const { pct: rescanPct, remainingSeconds: rescanRemaining, overrun: rescanOverrun } = useSimulatedProgress(
     RESCAN_ESTIMATED_SECONDS,
     rescanning,
@@ -60,25 +69,25 @@ export function CandidateDetailPage() {
       })
       .catch((e) => push(String(e), "error"))
       .finally(() => setLoading(false));
+    // Reattaches to a still-running "Check for updates" job for this
+    // candidate if one was started before a refresh/reopen/logout.
+    resumeCandidateRescanIfAny(id)
+      .then((result) => {
+        if (result && result.candidates_updated > 0) {
+          push("Found an update — refreshing this candidate's profile.", "success");
+          Promise.all([api.getCandidate(id), api.listCandidateSources(id)]).then(([c, s]) => {
+            setCandidate(c);
+            setSources(s);
+          });
+        }
+      })
+      .catch(() => {});
   }, [id]);
 
   async function checkForUpdates() {
     if (!id) return;
-    setRescanning(true);
-    setRescanProgress(null);
     try {
-      const job = await api.rescanCandidate(id);
-      let current = job;
-      while (current.status === "running") {
-        await new Promise((resolve) => setTimeout(resolve, RESCAN_POLL_INTERVAL_MS));
-        current = await api.getScanJob(current.id);
-        setRescanProgress(current.progress ?? null);
-      }
-      if (current.status === "failed") {
-        push(current.error ?? "Rescan failed.", "error");
-        return;
-      }
-      const result = current.result;
+      const result = await rescanCandidate(id);
       if (!result) return;
       // candidates_updated is specifically THIS candidate's row being
       // touched — a folder-origin rescan can also pick up an unrelated new
@@ -94,9 +103,6 @@ export function CandidateDetailPage() {
       }
     } catch (e) {
       push(String(e), "error");
-    } finally {
-      setRescanning(false);
-      setRescanProgress(null);
     }
   }
 
@@ -154,10 +160,10 @@ export function CandidateDetailPage() {
             remainingSeconds={rescanRemaining}
             overrun={rescanOverrun}
           />
-          {rescanProgress && (
+          {candidateRescanProgress && (
             <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-              {rescanProgress.resumes_found} message(s) checked so far
-              {rescanProgress.errors.length > 0 && ` — ${rescanProgress.errors.length} error(s)`}
+              {candidateRescanProgress.resumes_found} message(s) checked so far
+              {candidateRescanProgress.errors.length > 0 && ` — ${candidateRescanProgress.errors.length} error(s)`}
             </p>
           )}
         </div>
