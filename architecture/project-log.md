@@ -1,4 +1,4 @@
-<!-- Version: v0 | Last updated: 2026-08-24 | Status: current -->
+<!-- Version: v0 | Last updated: 2026-08-31 | Status: current -->
 
 # Project Log
 
@@ -759,6 +759,175 @@ so a refresh (or the tab simply losing focus long enough) silently loses visibil
 in-flight scan even though it keeps running server-side. Already fixed by this point (see the
 reattach-after-refresh + job-registry-pruning work) — worth noting here since this was the
 first time that fix's absence was actually *felt*, not just anticipated.
+
+## 26. Real-Gmail scan validated end-to-end, and a real frontend bug it surfaced
+
+With mock mode properly split (section 24), the user ran an actual scan against the connected
+Gmail account: 623 resumes found, 607 new candidates, 16 updated, in 24.5s — the first real
+end-to-end proof this pipeline works outside of mocks/tests. The one reported "error" turned
+out to be harmless: a stale `selectedAccountIds` entry left in `localStorage` from before an
+account was disconnected/reconnected (a fresh `EmailAccount` row gets a new id on reconnect).
+Fixed by pruning `selectedAccountIds` against the live account list every time
+`fetchEmailAccounts()` runs (`scan-store.ts`), instead of only ever appending to it.
+
+## 27. Extensive filtering on All Candidates (skills, status, visa, experience)
+
+Replaced free-text-only search with real structured filters, entirely server-side:
+
+- `storage.candidates_page()` gained `skills`/`employment_statuses`/`work_visa_statuses`/
+  `experience_min`/`experience_max` params — each multi-select is OR'd internally, all filters
+  combine as AND. Skills matching stays portable (cast-to-string `ILIKE` on the quoted JSON
+  value, not a SQLite-specific JSON operator) and deliberately guards against substring false
+  positives (`"sql"` must not match `["postgresql"]"`).
+- New `GET /candidates/facets` — distinct skills actually present in the pool (not a fixed
+  list) plus the enum values for status/visa and the current max `experience_years`, so the
+  filter UI never offers an option with zero matches.
+- Deliberately **left out** a `role`/title field — discussed and rejected: unlike the enum
+  fields, "role" has no controlled vocabulary, so an LLM-extracted value fragments instead of
+  faceting cleanly, and it would need a backfill decision for existing candidates. Skills +
+  experience + status + visa covers the same recruiter need without that risk.
+- Frontend: `MultiSelectFilter` and `ExperienceRangeFilter` (new, reusable popover
+  components), wired into `all-candidates-page.tsx`.
+- **Filters became apply-on-click, not apply-on-every-change** — a follow-up request after
+  the first version fired a request per checkbox click. Query text, skill/status/visa/
+  experience selections now stage in the store and only fetch on an explicit "Apply filters"
+  button (or Enter in the search box); sort and pagination still fetch immediately since they
+  act on whichever filter set is already applied, not new criteria.
+
+Same "apply-on-click, not per-change" pattern was applied to Match Results' job/Top-N
+controls (a "Load results" button replacing auto-refetch) — which surfaced a real regression:
+neither the selected job nor loaded matches were persisted anywhere, so a refresh now showed
+a blank page (previously masked by the auto-fetch that just ran again on every mount). Fixed
+by persisting `matches`/`topN` (`matches-store.ts`) and `selectedJobId` (`jobs-store.ts`) to
+`localStorage`; a `resultsAreStale` check still catches the case where the persisted matches
+belong to a job other than whichever is now selected, showing a "switched jobs, click Load
+results" prompt instead of silently showing mismatched results.
+
+## 28. Email deep-links — and a real bug in the first version
+
+Added a link from a candidate's profile straight to the source email in Gmail/Outlook's own
+web UI (so a recruiter can reply from the real thread, not compose a fresh one).
+`ResumeSource.email_link` populated at ingest time; Outlook uses Graph's own `webLink` field
+directly, Gmail needed one built from `https://mail.google.com/mail/u/0/#all/{id}`.
+
+**Bug in the first version:** used the Gmail message `id` instead of `threadId`. Gmail's web
+UI renders that URL fragment as a *thread* view — a reply/forward's own message id either
+404s or opens the wrong item in that view; only a message that's the sole one in its thread
+happens to have message id == thread id, which is why casual testing looked fine. Fixed by
+fetching `threadId` (added to `GMAIL_MESSAGE_FIELDS`) and using that instead — caught only
+because the user actually clicked the link and reported it didn't show the real email body,
+not from re-reading the code.
+
+Surfaced two adjacent gaps, both closed:
+- A plain rescan does **not** backfill `email_link` onto already-ingested resumes — dedup in
+  `ingest_service.py` keys on `(content_hash, source_ref)`, and an already-seen message hits
+  that exact match and is silently skipped, never re-touching the row. This became the seed
+  for the maintenance-task framework (section 30).
+- Candidate cards/lists needed a *batched* "most recent email_link" lookup
+  (`_batch_email_links`, mirrors the existing `_batch_origins` pattern) so All Candidates,
+  Match Results, and the candidate detail page all show it without N+1 queries.
+
+## 29. Scan-date-range picker losing its selection on tab navigation
+
+Reported as "select a date range, switch tabs, it vanishes." Root cause: `DateRangePicker`'s
+highlighted-preset state (`active`) was local `useState`, uncontrolled by its parent — the
+underlying `dateStart`/`dateEnd` values were still correctly held in `scan-store` the whole
+time, but the *component* unmounted on navigation and remounted with reset-to-default local
+state, showing "All time" even though a range was still technically applied. Fixed by making
+the component fully controlled: `scan-store` gained a `dateRangeLabel` field (which preset, or
+"custom", is active) alongside `dateStart`/`dateEnd`, all three now also persisted to
+`localStorage` (previously only date values existed, and even those weren't persisted) so the
+selection survives both tab-switching and a full refresh.
+
+## 30. Recent Activity was one-sided, and the maintenance-task framework it led to
+
+Two related fixes:
+
+**30a. Recent Activity fixed.** It only ever showed matching runs and up to 10 individual
+"Added <candidate>" rows — a single 600-resume scan produced 10 near-duplicate "Added" lines
+that buried any actual summary, and scans/maintenance runs had no representation at all. Added
+`IngestScanHistoryEntry` (one row per completed scan — folder, email, or maintenance —
+recorded by `scan.py`'s `scan_folders`/`scan_email_accounts`/the new `scan_all`, the opt-in
+nightly scheduler, and `routes/maintenance.py`). `_recent_activity()` now merges matching-run
+summaries with these scan summaries and drops the per-candidate rows entirely — a scan of any
+size now reads as one line, e.g. "Scanned email (x@example.com) — 623 found, 607 new, 16
+updated."
+
+**30b. Maintenance-task framework.** The email-link backfill gap (section 28) is the first
+instance of a pattern that will recur: a feature that reads a field on existing rows only
+applies going forward once shipped, and "just rescan" doesn't fix it (dedup skips already-seen
+rows). Built as a reusable registry (`app/maintenance/tasks.py`) rather than a one-off script:
+a task is `{id, label, description, run_fn, pending_count_fn}`; it gets a background job for
+free (reuses `job_registry.py` — the exact scan-job infra, so progress polling/dedup-guard/
+pruning are already solved), a route (`GET /maintenance/tasks`, `POST /maintenance/tasks/
+{id}/run`), and a UI panel. First+only task registered: `email_link_backfill` — looks up just
+the thread id/webLink for existing `ResumeSource` rows directly via the Gmail/Outlook API
+(no re-ingestion, no re-parsing, no LLM calls).
+
+`pending_count` (a query, e.g. "how many resume_sources still have no `email_link`") drives a
+Dashboard "Updates available" banner that only appears when a task actually has pending work —
+verified against the real database: 14,115 of the account's real email sources predate this
+feature and are still pending. The per-task run/poll/progress UI (`MaintenanceTaskRow`) is
+shared between this banner and the full "Data maintenance" panel on Scan Sources, so the two
+surfaces can't drift.
+
+## 31. Targeted rescans — per-candidate, per-job, and bulk
+
+Three new ways to catch updates without paying for a full mailbox scan, each scoped to a
+different, deliberately-sized unit of work:
+
+- **Per-candidate** (`POST /candidates/{id}/rescan`) — "Check for updates" on the candidate
+  detail page. Narrows Gmail/Outlook search to just that person's sender address
+  (`GmailIngestor`/`OutlookIngestor` gained a `sender_email` filter param) and re-scans their
+  known folder path(s) as-is. Extracted as `rescan_candidate_sources()` so it's reusable, not
+  duplicated, by the next scope down.
+- **Per-job, bounded to matched candidates** (`POST /matches/{job_id}/rescan-matched`) — "Check
+  for updates" on Match Results. Loops the per-candidate rescan over just a job's already-
+  matched candidates (naturally capped by whatever `top_n` the match run used), reporting
+  "checked N, updated X, unchanged Y" so it's explicit that only some candidates actually
+  changed, not a bulk re-ingest.
+- **All candidates, bulk** (`POST /scan/all`) — "Rescan all for updates" on the All Candidates
+  page. Deliberately **not** a loop of per-candidate scoped rescans at this size — one combined
+  pass over every connected account + every known folder path (same cost as a normal Scan
+  Sources run), vs. hundreds of separate mailbox searches if done per-candidate. This tradeoff
+  was confirmed with the user directly (`AskUserQuestion`) before building, since it materially
+  changes real API cost at volume.
+
+Also fixed while researching this: the candidate detail page's match list only showed a bare
+tier badge, no red flags/missing info/judge notes — so the Dashboard's "Needs Attention →
+Review" link landed somewhere that didn't explain *why* a match needed a look. `CandidateOut`'s
+match rows were the lightweight `MatchSummaryItem` shape; added `CandidateMatchDetail` (extends
+it with `reasons`/`missing_info`/`flags`/`judge_notes`) used only for `CandidateDetailOut`, so
+the Jobs-page "top candidates" widget (which still only needs the lightweight shape) is
+unaffected.
+
+## 32. OAuth setup guidance, progress bars everywhere, Jobs page bulk actions
+
+**OAuth setup guidance.** Clicking "Connect Gmail"/"Connect Outlook" with no OAuth client
+configured hit the backend's 400 correctly, but since `connect/*` are plain `<a href>` browser
+navigations (can't carry an auth header, so can't be a normal `fetch()` either), the error
+rendered as raw unstyled JSON instead of reaching the app's own UI at all. New
+`GET /email-accounts/oauth-status` (are `GOOGLE_OAUTH_CLIENT_ID`/`MS_OAUTH_CLIENT_ID` set)
+drives an inline, collapsible setup-steps banner on Email Access *before* that click happens,
+and disables the Connect button for whichever provider isn't configured yet.
+
+**Progress bars audited across every long-running action.** Several background jobs had only
+a spinner with no sense of progress: Data Maintenance tasks, per-candidate "Check for
+updates," and the Jobs page's per-job "Scan & match" panel all gained the same
+`ProgressBar`/`useSimulatedProgress` treatment Scan Sources already had, plus live counts where
+the backend reports real interim progress (every maintenance-task checkpoint, every candidate
+checked in a rescan).
+
+**Jobs page bulk actions.** "Select all" (with indeterminate-state checkbox), "Match selected,"
+and "Match all (N)" — runs matching against existing candidate data across multiple jobs in
+sequence with a progress bar. Deliberately *not* given the same persisted-job-id
+survive-refresh treatment the scan/rescan jobs got: each matching run is already an
+independent, atomic backend call, so a refresh mid-loop only loses the client-side "how many
+are left" bookkeeping, not any already-completed job's results — a smaller gap than a scan
+losing all progress, so the job-registry treatment wasn't worth the added complexity here.
+
+**Rename:** "Candidate Results" → "Match Results" throughout the UI, per user feedback that
+the old name was confusing.
 
 ## Cross-references
 
