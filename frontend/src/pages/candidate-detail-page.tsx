@@ -6,6 +6,7 @@ import {
   Briefcase,
   Clock,
   Code2,
+  Download,
   ExternalLink,
   FileText,
   Flag,
@@ -121,6 +122,15 @@ export function CandidateDetailPage() {
       } catch (e) {
         push(String(e), "error");
       }
+    }
+  }
+
+  async function downloadSource(sourceId: string) {
+    if (!id) return;
+    try {
+      await api.downloadCandidateSourceFile(id, sourceId);
+    } catch (e) {
+      push(String(e), "error");
     }
   }
 
@@ -397,6 +407,12 @@ export function CandidateDetailPage() {
                         <Mail size={12} /> Open email <ExternalLink size={10} />
                       </a>
                     )}
+                    <button
+                      onClick={() => downloadSource(s.id)}
+                      className="flex items-center gap-1 text-indigo-600 dark:text-indigo-400"
+                    >
+                      <Download size={12} /> Download
+                    </button>
                     <button
                       onClick={() => toggleSource(s.id)}
                       className="text-indigo-600 dark:text-indigo-400"

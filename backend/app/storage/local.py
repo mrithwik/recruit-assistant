@@ -141,35 +141,29 @@ class LocalStorageBackend(BaseStorageBackend):
             )
         ).scalars().first()
 
-    def candidates_page(
+    def _candidate_filter_conditions(
         self,
-        session: Session,
         start: datetime | None,
         end: datetime | None,
         source: str | None,
         query: str | None,
-        sort: str,
-        limit: int,
-        offset: int,
-        skills: list[str] | None = None,
-        employment_statuses: list[str] | None = None,
-        work_visa_statuses: list[str] | None = None,
-        experience_min: float | None = None,
-        experience_max: float | None = None,
-        data_mode: str = "all",
-        needs_attention: bool = False,
-    ) -> tuple[list[Candidate], int]:
-        """Filters + sorts + pages entirely in SQL instead of loading every
-        matching candidate into Python and slicing there — the previous
-        approach (`candidates_in_date_range`) returned the full result set on
-        every call, which is what made All Candidates cost more the larger
-        the database got, independent of how many rows the recruiter was
-        actually looking at. All filters happen before LIMIT/OFFSET so the
-        page and its total count both reflect the same filtered set, and
-        combine as AND (a candidate must match every active filter) while
-        each multi-select filter (skills/status/visa) is an OR internally —
-        e.g. skills=[Python, Go] + employment_statuses=[actively_looking]
-        means "(Python or Go) and actively_looking"."""
+        skills: list[str] | None,
+        employment_statuses: list[str] | None,
+        work_visa_statuses: list[str] | None,
+        experience_min: float | None,
+        experience_max: float | None,
+        data_mode: str,
+        needs_attention: bool,
+    ) -> list:
+        """Shared by candidates_page (paginated, for the All Candidates UI)
+        and candidates_matching (unpaginated, for CSV export) so the two
+        can never drift apart on what "matches the current filters" means —
+        an export that silently used different logic than the screen it's
+        exporting from would be its own bug. Combines as AND (a candidate
+        must match every active filter) while each multi-select filter
+        (skills/status/visa) is an OR internally — e.g. skills=[Python, Go]
+        + employment_statuses=[actively_looking] means "(Python or Go) and
+        actively_looking"."""
         conditions = []
         if start:
             conditions.append(Candidate.date_submitted >= start)
@@ -225,6 +219,37 @@ class LocalStorageBackend(BaseStorageBackend):
         data_mode_condition = candidate_id_condition(Candidate.id, data_mode)
         if data_mode_condition is not None:
             conditions.append(data_mode_condition)
+        return conditions
+
+    def candidates_page(
+        self,
+        session: Session,
+        start: datetime | None,
+        end: datetime | None,
+        source: str | None,
+        query: str | None,
+        sort: str,
+        limit: int,
+        offset: int,
+        skills: list[str] | None = None,
+        employment_statuses: list[str] | None = None,
+        work_visa_statuses: list[str] | None = None,
+        experience_min: float | None = None,
+        experience_max: float | None = None,
+        data_mode: str = "all",
+        needs_attention: bool = False,
+    ) -> tuple[list[Candidate], int]:
+        """Filters + sorts + pages entirely in SQL instead of loading every
+        matching candidate into Python and slicing there — the previous
+        approach (`candidates_in_date_range`) returned the full result set on
+        every call, which is what made All Candidates cost more the larger
+        the database got, independent of how many rows the recruiter was
+        actually looking at. All filters happen before LIMIT/OFFSET so the
+        page and its total count both reflect the same filtered set."""
+        conditions = self._candidate_filter_conditions(
+            start, end, source, query, skills, employment_statuses, work_visa_statuses,
+            experience_min, experience_max, data_mode, needs_attention,
+        )
 
         count_stmt = select(func.count()).select_from(Candidate)
         for condition in conditions:
@@ -238,6 +263,37 @@ class LocalStorageBackend(BaseStorageBackend):
         page_stmt = page_stmt.order_by(column.desc() if descending else column.asc()).limit(limit).offset(offset)
 
         return list(session.execute(page_stmt).scalars()), total
+
+    def candidates_matching(
+        self,
+        session: Session,
+        start: datetime | None,
+        end: datetime | None,
+        source: str | None,
+        query: str | None,
+        sort: str,
+        skills: list[str] | None = None,
+        employment_statuses: list[str] | None = None,
+        work_visa_statuses: list[str] | None = None,
+        experience_min: float | None = None,
+        experience_max: float | None = None,
+        data_mode: str = "all",
+        needs_attention: bool = False,
+    ) -> list[Candidate]:
+        """Every candidate matching the filters, unpaginated — backs CSV
+        export, where "the current filters" has to mean everything they
+        match, not just the 50 on screen (see candidates_page for the
+        paginated version the All Candidates UI actually renders)."""
+        conditions = self._candidate_filter_conditions(
+            start, end, source, query, skills, employment_statuses, work_visa_statuses,
+            experience_min, experience_max, data_mode, needs_attention,
+        )
+        column, descending = _SORT_COLUMNS.get(sort, _SORT_COLUMNS["recent"])
+        stmt = select(Candidate)
+        for condition in conditions:
+            stmt = stmt.where(condition)
+        stmt = stmt.order_by(column.desc() if descending else column.asc())
+        return list(session.execute(stmt).scalars())
 
     def candidate_facets(self, session: Session, data_mode: str = "all") -> tuple[list[str], float]:
         # Skills is a JSON list per row with no relational table behind it,

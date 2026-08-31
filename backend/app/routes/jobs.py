@@ -27,6 +27,20 @@ def list_jobs(storage: BaseStorageBackend = Depends(get_storage)):
         )
 
 
+@router.get("/inactive", response_model=list[JobOut])
+def list_inactive_jobs(storage: BaseStorageBackend = Depends(get_storage)):
+    """Deactivated ('deleted') jobs — soft-delete only sets active=False, so
+    nothing here is actually gone. Backs the Jobs page's "Inactive jobs"
+    section, which is the undo path once a "Job removed" toast's own Undo
+    button has already timed out."""
+    with storage.session() as session:
+        return list(
+            session.execute(
+                select(Job).where(Job.active.is_(False)).order_by(Job.created_at.desc())
+            ).scalars()
+        )
+
+
 @router.post("", response_model=JobOut)
 def create_job(payload: JobCreate, storage: BaseStorageBackend = Depends(get_storage)):
     with storage.session() as session:
@@ -52,6 +66,18 @@ def deactivate_job(job_id: str, storage: BaseStorageBackend = Depends(get_storag
         job.active = False
         session.commit()
         return {"status": "deactivated"}
+
+
+@router.post("/{job_id}/reactivate", response_model=JobOut)
+def reactivate_job(job_id: str, storage: BaseStorageBackend = Depends(get_storage)):
+    with storage.session() as session:
+        job = session.get(Job, job_id)
+        if not job:
+            raise HTTPException(404, "Job not found")
+        job.active = True
+        session.commit()
+        session.refresh(job)
+        return job
 
 
 @router.post("/bulk-delete", response_model=BulkDeleteJobsOut)

@@ -24,6 +24,75 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   return res.json();
 }
 
+// A plain <a href> can't carry the Authorization header this app uses for
+// every other request (auth is a bearer token, not a cookie) — a resume
+// download or CSV export needs an authenticated fetch first, then a
+// client-side save from the resulting blob. Shared by both.
+async function downloadFile(path: string, fallbackFilename: string): Promise<void> {
+  const token = getToken();
+  const res = await fetch(`${BASE}${path}`, {
+    headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+  });
+  if (res.status === 401) {
+    clearToken();
+    window.dispatchEvent(new CustomEvent("auth:unauthorized"));
+    throw new Error("401 Unauthorized: session expired, please sign in again");
+  }
+  if (!res.ok) {
+    const detail = await res.text();
+    throw new Error(`${res.status} ${res.statusText}: ${detail}`);
+  }
+  const disposition = res.headers.get("content-disposition") ?? "";
+  const match = disposition.match(/filename="?([^"]+)"?/);
+  const filename = match ? match[1] : fallbackFilename;
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+interface CandidateFilterParams {
+  date_start?: string;
+  date_end?: string;
+  source?: string;
+  q?: string;
+  sort?: string;
+  skill?: string[];
+  employment_status?: string[];
+  work_visa_status?: string[];
+  experience_min?: number;
+  experience_max?: number;
+  data_mode?: string;
+  needs_attention?: boolean;
+}
+
+// Shared by listCandidates (paginated) and exportCandidates (full CSV) so
+// "the current filters" can never mean something different between the
+// screen and the export it produces — see storage.candidates_matching on
+// the backend, which shares its condition-building with candidates_page
+// for the identical reason.
+function candidateFilterQueryString(params?: CandidateFilterParams): URLSearchParams {
+  const qs = new URLSearchParams();
+  if (params?.date_start) qs.set("date_start", params.date_start);
+  if (params?.date_end) qs.set("date_end", params.date_end);
+  if (params?.source) qs.set("source", params.source);
+  if (params?.q) qs.set("q", params.q);
+  if (params?.sort) qs.set("sort", params.sort);
+  for (const s of params?.skill ?? []) qs.append("skill", s);
+  for (const s of params?.employment_status ?? []) qs.append("employment_status", s);
+  for (const s of params?.work_visa_status ?? []) qs.append("work_visa_status", s);
+  if (params?.experience_min !== undefined) qs.set("experience_min", String(params.experience_min));
+  if (params?.experience_max !== undefined) qs.set("experience_max", String(params.experience_max));
+  if (params?.data_mode) qs.set("data_mode", params.data_mode);
+  if (params?.needs_attention) qs.set("needs_attention", "true");
+  return qs;
+}
+
 export const api = {
   health: () => fetch("/health").then((r) => r.json()),
 
@@ -49,6 +118,8 @@ export const api = {
   deactivateJob: (id: string) => request<void>(`/jobs/${id}`, { method: "DELETE" }),
   bulkDeleteJobs: (job_ids: string[]) =>
     request<{ deleted: number }>("/jobs/bulk-delete", { method: "POST", body: JSON.stringify({ job_ids }) }),
+  listInactiveJobs: () => request<import("./types").Job[]>("/jobs/inactive"),
+  reactivateJob: (id: string) => request<import("./types").Job>(`/jobs/${id}/reactivate`, { method: "POST" }),
 
   scanFolders: (folder_paths: string[], include_subfolders: boolean, date_start?: string, date_end?: string) =>
     request<import("./types").ScanJob>("/scan/folders", {
@@ -74,39 +145,17 @@ export const api = {
   updateMockMode: (payload: { use_mock_llm?: boolean; use_mock_email?: boolean }) =>
     request<import("./types").MockMode>("/settings/mock-mode", { method: "PATCH", body: JSON.stringify(payload) }),
 
-  listCandidates: (params?: {
-    date_start?: string;
-    date_end?: string;
-    source?: string;
-    q?: string;
-    sort?: string;
-    limit?: number;
-    offset?: number;
-    skill?: string[];
-    employment_status?: string[];
-    work_visa_status?: string[];
-    experience_min?: number;
-    experience_max?: number;
-    data_mode?: string;
-    needs_attention?: boolean;
-  }) => {
-    const qs = new URLSearchParams();
-    if (params?.date_start) qs.set("date_start", params.date_start);
-    if (params?.date_end) qs.set("date_end", params.date_end);
-    if (params?.source) qs.set("source", params.source);
-    if (params?.q) qs.set("q", params.q);
-    if (params?.sort) qs.set("sort", params.sort);
+  listCandidates: (params?: CandidateFilterParams & { limit?: number; offset?: number }) => {
+    const qs = candidateFilterQueryString(params);
     if (params?.limit !== undefined) qs.set("limit", String(params.limit));
     if (params?.offset !== undefined) qs.set("offset", String(params.offset));
-    for (const s of params?.skill ?? []) qs.append("skill", s);
-    for (const s of params?.employment_status ?? []) qs.append("employment_status", s);
-    for (const s of params?.work_visa_status ?? []) qs.append("work_visa_status", s);
-    if (params?.experience_min !== undefined) qs.set("experience_min", String(params.experience_min));
-    if (params?.experience_max !== undefined) qs.set("experience_max", String(params.experience_max));
-    if (params?.data_mode) qs.set("data_mode", params.data_mode);
-    if (params?.needs_attention) qs.set("needs_attention", "true");
     const suffix = qs.toString() ? `?${qs.toString()}` : "";
     return request<import("./types").CandidateListResult>(`/candidates${suffix}`);
+  },
+  exportCandidates: (params?: CandidateFilterParams) => {
+    const qs = candidateFilterQueryString(params);
+    const suffix = qs.toString() ? `?${qs.toString()}` : "";
+    return downloadFile(`/candidates/export${suffix}`, "candidates.csv");
   },
   getCandidateFacets: (dataMode?: string) =>
     request<import("./types").CandidateFacets>(
@@ -127,6 +176,8 @@ export const api = {
     request<{ origin: string; source_ref: string; date_submitted: string; text: string }>(
       `/candidates/${id}/sources/${sourceId}/text`,
     ),
+  downloadCandidateSourceFile: (id: string, sourceId: string) =>
+    downloadFile(`/candidates/${id}/sources/${sourceId}/file`, "resume"),
 
   runMatching: (jobId: string, topN: number, dataMode?: string, batchId?: string) =>
     request<import("./types").ScanJob>(

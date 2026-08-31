@@ -1,12 +1,15 @@
 """Candidate lookup, filterable by date submitted / source — backs the
 date-range filtering in Candidate Results (2.5) regardless of origin."""
 
+import csv
+import io
 import time
 from datetime import datetime
 
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy import func, select
 
 from app.data_classification import candidate_id_condition
@@ -150,6 +153,73 @@ def get_candidate_facets(
         )
 
 
+@router.get("/export")
+def export_candidates(
+    date_start: datetime | None = Query(None),
+    date_end: datetime | None = Query(None),
+    source: str | None = Query(None),
+    q: str | None = Query(None),
+    sort: str = Query("recent"),
+    skill: list[str] | None = Query(None),
+    employment_status: list[str] | None = Query(None),
+    work_visa_status: list[str] | None = Query(None),
+    experience_min: float | None = Query(None, ge=0),
+    experience_max: float | None = Query(None, ge=0),
+    data_mode: str = Query("all"),
+    needs_attention: bool = Query(False),
+    storage: BaseStorageBackend = Depends(get_storage),
+):
+    """CSV of every candidate matching the current All Candidates filters —
+    same filter semantics as GET /candidates (storage.candidates_matching
+    shares its condition-building with candidates_page), but unpaginated:
+    "the current filters" has to mean everything they match, not just the
+    page on screen."""
+    with storage.session() as session:
+        candidates = storage.candidates_matching(
+            session,
+            date_start,
+            date_end,
+            source,
+            q,
+            sort,
+            skills=skill,
+            employment_statuses=employment_status,
+            work_visa_statuses=work_visa_status,
+            experience_min=experience_min,
+            experience_max=experience_max,
+            data_mode=data_mode,
+            needs_attention=needs_attention,
+        )
+        buffer = io.StringIO()
+        writer = csv.writer(buffer)
+        writer.writerow(
+            ["Name", "Email", "Phone", "Employment status", "Work authorization", "Experience (years)", "Skills", "Education", "Date submitted", "LinkedIn", "GitHub", "Portfolio"]
+        )
+        for c in candidates:
+            writer.writerow(
+                [
+                    f"{c.legal_first_name} {c.legal_last_name}".strip(),
+                    c.email,
+                    c.phone,
+                    c.employment_status,
+                    c.work_visa_status,
+                    c.experience_years,
+                    "; ".join(c.skills or []),
+                    "; ".join(c.education or []),
+                    c.date_submitted.isoformat() if c.date_submitted else "",
+                    c.linkedin_url,
+                    c.github_url,
+                    c.portfolio_url,
+                ]
+            )
+        buffer.seek(0)
+        return StreamingResponse(
+            iter([buffer.getvalue()]),
+            media_type="text/csv",
+            headers={"Content-Disposition": "attachment; filename=candidates.csv"},
+        )
+
+
 @router.get("/data-mode-counts", response_model=DataModeCountsOut)
 def get_data_mode_counts(storage: BaseStorageBackend = Depends(get_storage)):
     with storage.session() as session:
@@ -221,6 +291,29 @@ def list_candidate_sources(candidate_id: str, storage: BaseStorageBackend = Depe
             )
             for s in sources
         ]
+
+
+@router.get("/{candidate_id}/sources/{source_id}/file")
+def download_candidate_source_file(
+    candidate_id: str, source_id: str, storage: BaseStorageBackend = Depends(get_storage)
+):
+    """Streams back the original resume file for one submission — same
+    file_path the /text route below extracts text from, but as a
+    downloadable attachment instead of parsed text. Nothing new is written:
+    every scan already mirrors the original bytes to disk for exactly this
+    (mirror_writer.py) — this just serves them back, which nothing did
+    before."""
+    with storage.session() as session:
+        source = session.get(ResumeSource, source_id)
+        if not source or source.candidate_id != candidate_id:
+            raise HTTPException(404, "Source not found")
+        candidate = session.get(Candidate, candidate_id)
+        path = Path(source.file_path)
+        if not path.exists():
+            raise HTTPException(404, "Source file no longer on disk")
+        name = f"{candidate.legal_first_name}_{candidate.legal_last_name}".strip("_") if candidate else ""
+        filename = f"{name or 'resume'}{path.suffix}"
+        return FileResponse(path, filename=filename, media_type="application/octet-stream")
 
 
 @router.get("/{candidate_id}/sources/{source_id}/text")

@@ -1,6 +1,7 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { AlertTriangle, ListFilter, Mail, RefreshCw, Search, Users, X } from "lucide-react";
+import { AlertTriangle, Download, ListFilter, Mail, RefreshCw, Search, Users, X } from "lucide-react";
+import { api } from "../lib/api";
 import { useCandidatesStore, CANDIDATES_PAGE_SIZE } from "../stores/candidates-store";
 import { useToastStore } from "../stores/toast-store";
 import { useDataModeStore } from "../stores/data-mode-store";
@@ -125,6 +126,28 @@ export function AllCandidatesPage() {
     fetchCandidates().catch((e) => push(String(e), "error"));
   }
 
+  const [exporting, setExporting] = useState(false);
+  async function handleExport() {
+    setExporting(true);
+    try {
+      await api.exportCandidates({
+        q: query || undefined,
+        sort,
+        skill: skills.length ? skills : undefined,
+        employment_status: employmentStatuses.length ? employmentStatuses : undefined,
+        work_visa_status: workVisaStatuses.length ? workVisaStatuses : undefined,
+        experience_min: experienceMin,
+        experience_max: experienceMax,
+        needs_attention: needsAttention || undefined,
+        data_mode: dataMode,
+      });
+    } catch (e) {
+      push(String(e), "error");
+    } finally {
+      setExporting(false);
+    }
+  }
+
   function changeSort(v: SortKey) {
     setSort(v);
     fetchCandidates().catch((e) => push(String(e), "error"));
@@ -151,6 +174,16 @@ export function AllCandidatesPage() {
             <span className="rounded-full bg-zinc-100 px-3 py-1 text-xs font-semibold text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
               {total} total
             </span>
+            <Button
+              variant="secondary"
+              size="sm"
+              icon={<Download size={13} />}
+              loading={exporting}
+              onClick={handleExport}
+              title="Exports every candidate matching the current search/filters, not just this page"
+            >
+              Export CSV
+            </Button>
             <Button
               variant="secondary"
               size="sm"
@@ -253,34 +286,43 @@ export function AllCandidatesPage() {
         )}
       </div>
 
-      {!loading && total === 0 && !query && !hasAnyFilters && dataMode === "all" && (
+      {/* Every active condition (search text, needs-attention, advanced
+          filters, data-mode scope) combines as AND, so the empty state has
+          to name whichever of THOSE are actually on — special-casing "no
+          filters" vs. "needs-attention" vs. everything else missed their
+          combinations (QA: needs-attention + a data-mode scope with zero
+          results fell back to "nothing needs attention," hiding that the
+          data-mode toggle was the real cause). Data-mode gets called out
+          whenever it's active, regardless of what else is. */}
+      {!loading && total === 0 && (
         <EmptyState
           icon={<Users size={20} />}
-          title="No candidates yet"
-          description="Scan a local folder or connected mailbox from Scan Sources to build the pool."
+          title={
+            !query && !hasAnyFilters
+              ? dataMode === "all"
+                ? "No candidates yet"
+                : `No ${dataMode} candidates right now`
+              : "No matching candidates"
+          }
+          description={(
+            [
+              !query && !hasAnyFilters
+                ? dataMode === "all"
+                  ? "Scan a local folder or connected mailbox from Scan Sources to build the pool."
+                  : null
+                : query
+                  ? `Nothing matches "${query}".`
+                  : needsAttention && !hasAdvancedFilters
+                    ? "Nothing is currently red-flagged or missing info."
+                    : "Nothing matches the selected filters.",
+              dataMode !== "all"
+                ? `The "${dataMode === "real" ? "Real" : "Mock"}" toggle in the header is also scoping results — switch to "All" to check the rest of the pool.`
+                : null,
+            ] as (string | null)[]
+          )
+            .filter((s): s is string => Boolean(s))
+            .join(" ")}
         />
-      )}
-
-      {/* Zero results under a "Real" or "Mock" data-mode scope isn't the
-          same situation as an empty pool — sources are connected and
-          scanned, the header toggle is just excluding everything currently
-          in it. Pointing back at Scan Sources here was misleading (QA). */}
-      {!loading && total === 0 && !query && !hasAnyFilters && dataMode !== "all" && (
-        <EmptyState
-          icon={<Users size={20} />}
-          title={`No ${dataMode} candidates right now`}
-          description={`The pool may still have candidates in the other scope — switch the "${dataMode === "real" ? "Real" : "Mock"}" toggle in the header back to "All" to see everything.`}
-        />
-      )}
-
-      {!loading && total === 0 && (query || hasAnyFilters) && (
-        <p className="py-8 text-center text-sm text-zinc-400">
-          {query
-            ? `No candidates match "${query}".`
-            : needsAttention && !hasAdvancedFilters
-              ? "No candidates currently need attention — nothing red-flagged or missing info."
-              : "No candidates match the current filters."}
-        </p>
       )}
 
       <div className="flex flex-col gap-2">

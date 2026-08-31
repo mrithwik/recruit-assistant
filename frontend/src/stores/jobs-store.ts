@@ -7,10 +7,17 @@ interface JobsState {
   jobs: Job[];
   selectedJobId: string | null;
   loading: boolean;
+  // Deactivated jobs — the undo path for a single delete once the toast's
+  // own "Undo" button has timed out. Fetched on demand (Jobs page's
+  // "Inactive jobs" section), not kept in sync automatically.
+  inactiveJobs: Job[];
+  inactiveJobsLoading: boolean;
   fetchJobs: () => Promise<void>;
+  fetchInactiveJobs: () => Promise<void>;
   createJob: (title: string, rawText: string, company?: string) => Promise<Job>;
   deactivateJob: (id: string) => Promise<void>;
   bulkDeactivateJobs: (ids: string[]) => Promise<void>;
+  reactivateJob: (id: string) => Promise<void>;
   selectJob: (id: string) => void;
 }
 
@@ -25,6 +32,8 @@ export const useJobsStore = create<JobsState>()(
       jobs: [],
       selectedJobId: null,
       loading: false,
+      inactiveJobs: [],
+      inactiveJobsLoading: false,
       fetchJobs: async () => {
         set({ loading: true });
         const jobs = await api.listJobs();
@@ -32,6 +41,15 @@ export const useJobsStore = create<JobsState>()(
         const { selectedJobId } = get();
         const stillExists = selectedJobId && jobs.some((j) => j.id === selectedJobId);
         if (!stillExists && jobs.length > 0) set({ selectedJobId: jobs[0].id });
+      },
+      fetchInactiveJobs: async () => {
+        set({ inactiveJobsLoading: true });
+        try {
+          const inactiveJobs = await api.listInactiveJobs();
+          set({ inactiveJobs });
+        } finally {
+          set({ inactiveJobsLoading: false });
+        }
       },
       createJob: async (title, rawText, company = "") => {
         const job = await api.createJob(title, rawText, company);
@@ -45,6 +63,13 @@ export const useJobsStore = create<JobsState>()(
       bulkDeactivateJobs: async (ids) => {
         await api.bulkDeleteJobs(ids);
         set((s) => ({ jobs: s.jobs.filter((j) => !ids.includes(j.id)) }));
+      },
+      reactivateJob: async (id) => {
+        const job = await api.reactivateJob(id);
+        set((s) => ({
+          jobs: s.jobs.some((j) => j.id === id) ? s.jobs : [job, ...s.jobs],
+          inactiveJobs: s.inactiveJobs.filter((j) => j.id !== id),
+        }));
       },
       selectJob: (id) => set({ selectedJobId: id }),
     }),

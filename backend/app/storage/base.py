@@ -52,6 +52,27 @@ class BaseStorageBackend(ABC):
     ) -> tuple[list[Candidate], int]: ...
 
     @abstractmethod
+    def candidates_matching(
+        self,
+        session: Session,
+        start: datetime | None,
+        end: datetime | None,
+        source: str | None,
+        query: str | None,
+        sort: str,
+        skills: list[str] | None = None,
+        employment_statuses: list[str] | None = None,
+        work_visa_statuses: list[str] | None = None,
+        experience_min: float | None = None,
+        experience_max: float | None = None,
+        data_mode: str = "all",
+        needs_attention: bool = False,
+    ) -> list[Candidate]:
+        """Every candidate matching the filters, unpaginated — backs CSV
+        export (routes/candidates.py's /export)."""
+        ...
+
+    @abstractmethod
     def candidate_facets(self, session: Session, data_mode: str = "all") -> tuple[list[str], float]:
         """Distinct skills actually present in the pool, plus the current
         max experience_years — backs the All Candidates filter bar's

@@ -9,6 +9,7 @@ import {
   ChevronsUpDown,
   Play,
   Plus,
+  RotateCcw,
   Search,
   SlidersHorizontal,
   Sparkles,
@@ -59,8 +60,19 @@ function sortJobs(list: Job[], sort: SortKey): Job[] {
 }
 
 export function JobsPage() {
-  const { jobs, fetchJobs, createJob, deactivateJob, bulkDeactivateJobs, selectJob, selectedJobId } =
-    useJobsStore();
+  const {
+    jobs,
+    fetchJobs,
+    createJob,
+    deactivateJob,
+    bulkDeactivateJobs,
+    reactivateJob,
+    selectJob,
+    selectedJobId,
+    inactiveJobs,
+    inactiveJobsLoading,
+    fetchInactiveJobs,
+  } = useJobsStore();
   const push = useToastStore((s) => s.push);
   const [adding, setAdding] = useState(false);
   const [title, setTitle] = useState("");
@@ -73,6 +85,11 @@ export function JobsPage() {
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [companyFilters, setCompanyFilters] = useState<Set<string>>(new Set());
+  // Deactivated jobs — the permanent undo path (the "Job removed" toast's
+  // own Undo button only lasts a few seconds). Collapsed and unfetched by
+  // default so a page with no deletions doesn't pay for a request it
+  // doesn't need.
+  const [showInactive, setShowInactive] = useState(false);
   // Bulk "match selected"/"match all" and "update matched"/"update
   // selected" — both persisted in bulk-jobs-store (not local state) so the
   // loop and its progress survive a tab switch, a refresh, or a
@@ -174,10 +191,21 @@ export function JobsPage() {
     });
   }
 
-  async function deleteOne(id: string) {
+  async function deleteOne(id: string, title: string) {
+    // Matches the confirm already required for bulk delete (deleteSelected
+    // below) — the single-job trash icon skipped it, an inconsistency in
+    // the app's own established pattern for the identical action.
+    if (!window.confirm(`Delete "${title}"?`)) return;
     try {
       await deactivateJob(id);
-      push("Job removed", "success");
+      push("Job removed", "success", {
+        action: {
+          label: "Undo",
+          onClick: () => {
+            reactivateJob(id).catch((e) => push(String(e), "error"));
+          },
+        },
+      });
     } catch (e) {
       push(String(e), "error");
     }
@@ -186,10 +214,18 @@ export function JobsPage() {
   async function deleteSelected() {
     if (selectedIds.size === 0) return;
     if (!window.confirm(`Delete ${selectedIds.size} selected job(s)?`)) return;
+    const ids = Array.from(selectedIds);
     try {
-      await bulkDeactivateJobs(Array.from(selectedIds));
+      await bulkDeactivateJobs(ids);
       setSelectedIds(new Set());
-      push("Selected jobs removed", "success");
+      push(`${ids.length} job(s) removed`, "success", {
+        action: {
+          label: "Undo",
+          onClick: () => {
+            Promise.all(ids.map((id) => reactivateJob(id))).catch((e) => push(String(e), "error"));
+          },
+        },
+      });
     } catch (e) {
       push(String(e), "error");
     }
@@ -475,7 +511,7 @@ export function JobsPage() {
                   <ChevronDown size={15} className={`transition-transform ${expanded ? "rotate-180" : ""}`} />
                 </button>
                 <button
-                  onClick={() => deleteOne(job.id)}
+                  onClick={() => deleteOne(job.id, job.title)}
                   className="shrink-0 rounded-md p-1.5 text-zinc-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950"
                   aria-label="Remove job"
                 >
@@ -507,6 +543,48 @@ export function JobsPage() {
             </Button>
           </div>
         )}
+
+        <div className="pt-2">
+          <button
+            type="button"
+            onClick={() => {
+              const next = !showInactive;
+              setShowInactive(next);
+              if (next) fetchInactiveJobs().catch((e) => push(String(e), "error"));
+            }}
+            className="flex items-center gap-1 text-xs font-medium text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300"
+          >
+            <ChevronDown size={13} className={`transition-transform ${showInactive ? "rotate-180" : ""}`} />
+            Inactive jobs
+          </button>
+
+          {showInactive && (
+            <div className="mt-2 flex flex-col gap-2">
+              {inactiveJobsLoading ? (
+                <p className="py-4 text-center text-sm text-zinc-400">Loading…</p>
+              ) : inactiveJobs.length === 0 ? (
+                <p className="py-4 text-center text-sm text-zinc-400">No deleted jobs.</p>
+              ) : (
+                inactiveJobs.map((job) => (
+                  <Card key={job.id} className="flex items-center justify-between gap-2 p-3 opacity-70">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium text-zinc-700 dark:text-zinc-200">{job.title}</p>
+                      {job.company && <p className="text-xs text-zinc-400">{job.company}</p>}
+                    </div>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      icon={<RotateCcw size={13} />}
+                      onClick={() => reactivateJob(job.id).then(() => push("Job restored", "success")).catch((e) => push(String(e), "error"))}
+                    >
+                      Reactivate
+                    </Button>
+                  </Card>
+                ))
+              )}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

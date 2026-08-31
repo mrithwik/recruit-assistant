@@ -8,6 +8,7 @@ import {
   ChevronsUpDown,
   Clock,
   Columns3,
+  Download,
   Flag,
   Mail,
   Play,
@@ -15,6 +16,7 @@ import {
   Sparkles,
   Users,
 } from "lucide-react";
+import { downloadCsv } from "../lib/csv";
 import { useJobsStore } from "../stores/jobs-store";
 import { useMatchesStore } from "../stores/matches-store";
 import { useToastStore } from "../stores/toast-store";
@@ -433,10 +435,47 @@ export function ResultsPage() {
           <p className="text-xs text-zinc-500 dark:text-zinc-400">
             Showing {pageStart}–{pageEnd} of {sortedMatches.length} matched candidate{sortedMatches.length === 1 ? "" : "s"}
           </p>
+          <div className="flex items-center gap-3">
+          <button
+            onClick={() =>
+              downloadCsv(
+                `${(selectedJob?.title ?? "matches").toLowerCase().replace(/[^a-z0-9]+/g, "-")}-matches.csv`,
+                [
+                  ["Name", "Email", "Score", "Tier", "Matched", "Gaps", "Missing info"],
+                  ...sortedMatches.map((m) => [
+                    `${m.candidate.legal_first_name} ${m.candidate.legal_last_name}`.trim() || m.candidate.email,
+                    m.candidate.email,
+                    m.score,
+                    m.tier,
+                    m.reasons.matched.join("; "),
+                    m.reasons.gaps.join("; "),
+                    m.missing_info.join("; "),
+                  ]),
+                ],
+              )
+            }
+            className="flex items-center gap-1 text-xs font-medium text-zinc-500 hover:text-indigo-600 dark:text-zinc-400 dark:hover:text-indigo-400"
+            title="Exports exactly what's shown — current sort and Top N"
+          >
+            <Download size={13} /> Export CSV
+          </button>
           {matches.length > 1 && (
             <button
               onClick={() =>
-                setExpandedIds(allPageExpanded ? new Set() : new Set(pageMatches.map((m) => m.id)))
+                setExpandedIds((prev) => {
+                  // Merge/subtract this page's ids into the existing set
+                  // instead of replacing it wholesale — a wholesale replace
+                  // silently re-collapsed every other page's cards the
+                  // moment you expanded a different one (QA: fixed the
+                  // button's label without fixing the actual state loss).
+                  const next = new Set(prev);
+                  if (allPageExpanded) {
+                    for (const m of pageMatches) next.delete(m.id);
+                  } else {
+                    for (const m of pageMatches) next.add(m.id);
+                  }
+                  return next;
+                })
               }
               className="flex items-center gap-1 text-xs font-medium text-zinc-500 hover:text-indigo-600 dark:text-zinc-400 dark:hover:text-indigo-400"
             >
@@ -444,6 +483,7 @@ export function ResultsPage() {
               {allPageExpanded ? "Collapse all" : "Expand all"}
             </button>
           )}
+          </div>
         </div>
       )}
 
