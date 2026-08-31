@@ -7,8 +7,9 @@ from datetime import datetime
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select
+from sqlalchemy import func, select
 
+from app.data_classification import candidate_id_condition
 from app.dependencies import get_storage
 from app.models.db import Candidate, Job, Match, ResumeSource
 from app.models.enums import EmploymentStatus, WorkVisaStatus
@@ -18,6 +19,7 @@ from app.models.schemas import (
     CandidateListOut,
     CandidateMatchDetail,
     CandidateOut,
+    DataModeCountsOut,
     MatchReasons,
     ResumeSourceOut,
 )
@@ -103,6 +105,7 @@ def list_candidates(
     work_visa_status: list[str] | None = Query(None, description="repeatable; any of"),
     experience_min: float | None = Query(None, ge=0),
     experience_max: float | None = Query(None, ge=0),
+    data_mode: str = Query("all", description="'all', 'real', or 'mock' — see /candidates/facets"),
     storage: BaseStorageBackend = Depends(get_storage),
 ):
     start_time = time.monotonic()
@@ -121,6 +124,7 @@ def list_candidates(
             work_visa_statuses=work_visa_status,
             experience_min=experience_min,
             experience_max=experience_max,
+            data_mode=data_mode,
         )
         candidate_ids = [c.id for c in candidates]
         origins_by_candidate = _batch_origins(session, candidate_ids)
@@ -130,15 +134,27 @@ def list_candidates(
 
 
 @router.get("/facets", response_model=CandidateFacetsOut)
-def get_candidate_facets(storage: BaseStorageBackend = Depends(get_storage)):
+def get_candidate_facets(
+    data_mode: str = Query("all", description="'all', 'real', or 'mock'"),
+    storage: BaseStorageBackend = Depends(get_storage),
+):
     with storage.session() as session:
-        skills, max_experience = storage.candidate_facets(session)
+        skills, max_experience = storage.candidate_facets(session, data_mode=data_mode)
         return CandidateFacetsOut(
             skills=skills,
             employment_statuses=[s.value for s in EmploymentStatus],
             work_visa_statuses=[s.value for s in WorkVisaStatus],
             experience_years_max=max_experience,
         )
+
+
+@router.get("/data-mode-counts", response_model=DataModeCountsOut)
+def get_data_mode_counts(storage: BaseStorageBackend = Depends(get_storage)):
+    with storage.session() as session:
+        total = session.execute(select(func.count()).select_from(Candidate)).scalar_one()
+        real_condition = candidate_id_condition(Candidate.id, "real")
+        real = session.execute(select(func.count()).select_from(Candidate).where(real_condition)).scalar_one()
+        return DataModeCountsOut(real=real, mock=total - real, total=total)
 
 
 @router.get("/{candidate_id}", response_model=CandidateDetailOut)

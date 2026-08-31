@@ -1,8 +1,11 @@
+import { useEffect } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { LogOut, Moon, Sparkles, Sun } from "lucide-react";
 import { NAV_ITEMS } from "../../lib/nav";
 import { useSettingsStore } from "../../stores/settings-store";
 import { useAuthStore } from "../../stores/auth-store";
+import { DataModeToggle } from "./data-mode-toggle";
+import { useDataModeStore } from "../../stores/data-mode-store";
 
 export function Header() {
   const location = useLocation();
@@ -12,6 +15,11 @@ export function Header() {
   const user = useAuthStore((s) => s.user);
   const logout = useAuthStore((s) => s.logout);
   const current = NAV_ITEMS.find((n) => n.path === location.pathname);
+  const fetchDataModeCounts = useDataModeStore((s) => s.fetchCounts);
+
+  useEffect(() => {
+    fetchDataModeCounts().catch(() => {});
+  }, []);
 
   function handleLogout() {
     logout();
@@ -33,7 +41,8 @@ export function Header() {
         )}
       </div>
 
-      <div className="flex items-center gap-1">
+      <div className="flex items-center gap-3">
+        <DataModeToggle />
         <button
           onClick={toggleTheme}
           aria-label="Toggle theme"

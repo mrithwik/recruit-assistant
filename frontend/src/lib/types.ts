@@ -87,6 +87,12 @@ export interface CandidateFacets {
   experience_years_max: number;
 }
 
+export interface DataModeCounts {
+  real: number;
+  mock: number;
+  total: number;
+}
+
 export interface JobMatchSummary {
   job_id: string;
   total_matches: number;

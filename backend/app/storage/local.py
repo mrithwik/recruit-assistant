@@ -22,6 +22,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Session, sessionmaker
 
+from app.data_classification import candidate_id_condition
 from app.models.db import Base, Candidate, IngestScanHistoryEntry, ResumeSource, SearchHistoryEntry, User
 
 _SORT_COLUMNS = {
@@ -154,6 +155,7 @@ class LocalStorageBackend(BaseStorageBackend):
         work_visa_statuses: list[str] | None = None,
         experience_min: float | None = None,
         experience_max: float | None = None,
+        data_mode: str = "all",
     ) -> tuple[list[Candidate], int]:
         """Filters + sorts + pages entirely in SQL instead of loading every
         matching candidate into Python and slicing there — the previous
@@ -201,6 +203,9 @@ class LocalStorageBackend(BaseStorageBackend):
             conditions.append(Candidate.experience_years >= experience_min)
         if experience_max is not None:
             conditions.append(Candidate.experience_years <= experience_max)
+        data_mode_condition = candidate_id_condition(Candidate.id, data_mode)
+        if data_mode_condition is not None:
+            conditions.append(data_mode_condition)
 
         count_stmt = select(func.count()).select_from(Candidate)
         for condition in conditions:
@@ -215,15 +220,21 @@ class LocalStorageBackend(BaseStorageBackend):
 
         return list(session.execute(page_stmt).scalars()), total
 
-    def candidate_facets(self, session: Session) -> tuple[list[str], float]:
+    def candidate_facets(self, session: Session, data_mode: str = "all") -> tuple[list[str], float]:
         # Skills is a JSON list per row with no relational table behind it,
         # so "distinct skills across the pool" has to be flattened in
         # Python rather than a single SQL DISTINCT — fine at this scale
         # (one skills-list per candidate, not per resume line).
+        skills_stmt = select(Candidate.skills)
+        experience_stmt = select(func.max(Candidate.experience_years))
+        data_mode_condition = candidate_id_condition(Candidate.id, data_mode)
+        if data_mode_condition is not None:
+            skills_stmt = skills_stmt.where(data_mode_condition)
+            experience_stmt = experience_stmt.where(data_mode_condition)
         skill_set: set[str] = set()
-        for (skills,) in session.execute(select(Candidate.skills)):
+        for (skills,) in session.execute(skills_stmt):
             skill_set.update(skills or [])
-        max_experience = session.execute(select(func.max(Candidate.experience_years))).scalar_one() or 0.0
+        max_experience = session.execute(experience_stmt).scalar_one() or 0.0
         return sorted(skill_set, key=str.lower), max_experience
 
     def record_search_history(self, session: Session, entry: SearchHistoryEntry) -> SearchHistoryEntry:

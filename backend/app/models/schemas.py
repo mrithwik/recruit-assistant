@@ -142,6 +142,15 @@ class CandidateFacetsOut(BaseModel):
     experience_years_max: float = 0.0
 
 
+class DataModeCountsOut(BaseModel):
+    """Backs the "All / Real / Mock" data-mode toggle — lets it show
+    "Real (624) / Mock (14,115)" instead of unlabeled options."""
+
+    real: int = 0
+    mock: int = 0
+    total: int = 0
+
+
 class ResumeSourceOut(BaseModel):
     """One ingested submission for a candidate — backs the 'view source
     email/resume text' links on the candidate detail page."""

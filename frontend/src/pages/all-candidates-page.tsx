@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { ListFilter, Mail, RefreshCw, Search, Users, X } from "lucide-react";
 import { useCandidatesStore, CANDIDATES_PAGE_SIZE } from "../stores/candidates-store";
 import { useToastStore } from "../stores/toast-store";
+import { useDataModeStore } from "../stores/data-mode-store";
 import { PageHeader } from "../components/ui/page-header";
 import { Card } from "../components/ui/card";
 import { Input } from "../components/ui/input";
@@ -65,6 +66,7 @@ export function AllCandidatesPage() {
   } = useCandidatesStore();
   const push = useToastStore((s) => s.push);
   const navigate = useNavigate();
+  const dataMode = useDataModeStore((s) => s.dataMode);
   const { pct: rescanPct, remainingSeconds: rescanRemaining, overrun: rescanOverrun } = useSimulatedProgress(
     RESCAN_ALL_ESTIMATED_SECONDS,
     rescanningAll,
@@ -77,12 +79,20 @@ export function AllCandidatesPage() {
   // pagination act on whatever filter set is already applied, so those
   // still fetch immediately.
   useEffect(() => {
-    fetchFacets().catch((e) => push(String(e), "error"));
-    fetchCandidates().catch((e) => push(String(e), "error"));
     // Reattaches to an already-running "Rescan all" job if one was started
     // before a refresh/reopen — see candidates-store's rescanAllJobId.
     resumeRescanAllIfAny().catch(() => {});
   }, []);
+
+  // Also covers the initial load. The global "All / Real / Mock" toggle
+  // (header) changes what counts as "the pool" — re-fetch immediately
+  // rather than waiting for the next manual "Apply filters" click, since
+  // switching data sets is its own deliberate action already.
+  useEffect(() => {
+    fetchFacets().catch((e) => push(String(e), "error"));
+    setPage(1);
+    fetchCandidates().catch((e) => push(String(e), "error"));
+  }, [dataMode]);
 
   function handleRescanAll() {
     rescanAll().catch((e) => push(String(e), "error"));

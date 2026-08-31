@@ -18,6 +18,7 @@ import {
 import { useJobsStore } from "../stores/jobs-store";
 import { useMatchesStore } from "../stores/matches-store";
 import { useToastStore } from "../stores/toast-store";
+import { useDataModeStore } from "../stores/data-mode-store";
 import { MatchBadge } from "../components/ui/match-badge";
 import { DraftEmailModal } from "../components/candidates/draft-email-modal";
 import { CandidateCompareModal } from "../components/candidates/candidate-compare-modal";
@@ -82,6 +83,7 @@ export function ResultsPage() {
   } = useMatchesStore();
   const push = useToastStore((s) => s.push);
   const navigate = useNavigate();
+  const dataMode = useDataModeStore((s) => s.dataMode);
   const [searchParams] = useSearchParams();
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [draftFor, setDraftFor] = useState<Match | null>(null);
@@ -115,6 +117,15 @@ export function ResultsPage() {
       loadMatches(fromQuery).catch(() => {});
     }
   }, [searchParams]);
+
+  useEffect(() => {
+    // Global "All / Real / Mock" toggle — re-load whatever's already
+    // displayed under the new scope rather than leaving stale results
+    // (e.g. mock candidates) on screen after switching to "Real only".
+    if (selectedJobId && matches.length > 0) {
+      loadMatches(selectedJobId).catch((e) => push(String(e), "error"));
+    }
+  }, [dataMode]);
 
   function handleLoad() {
     if (!selectedJobId) return;

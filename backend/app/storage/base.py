@@ -47,10 +47,11 @@ class BaseStorageBackend(ABC):
         work_visa_statuses: list[str] | None = None,
         experience_min: float | None = None,
         experience_max: float | None = None,
+        data_mode: str = "all",
     ) -> tuple[list[Candidate], int]: ...
 
     @abstractmethod
-    def candidate_facets(self, session: Session) -> tuple[list[str], float]:
+    def candidate_facets(self, session: Session, data_mode: str = "all") -> tuple[list[str], float]:
         """Distinct skills actually present in the pool, plus the current
         max experience_years — backs the All Candidates filter bar's
         options (see routes/candidates.py's /facets)."""

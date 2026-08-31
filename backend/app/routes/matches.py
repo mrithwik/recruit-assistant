@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 
 from app.config import Settings
+from app.data_classification import candidate_id_condition
 from app.dependencies import get_llm_client, get_settings, get_storage
 from app.matching.concurrency import bounded_gather
 from app.matching.llm_client import LLMClient
@@ -47,6 +48,7 @@ async def _embedding_for(llm: LLMClient, model: str, candidate: Candidate) -> tu
 async def run_matching(
     job_id: str,
     top_n: int = Query(20, ge=1, le=200),
+    data_mode: str = Query("all", description="'all', 'real', or 'mock' — restricts the candidate pool matched against"),
     storage: BaseStorageBackend = Depends(get_storage),
     llm: LLMClient = Depends(get_llm_client),
     settings: Settings = Depends(get_settings),
@@ -57,7 +59,11 @@ async def run_matching(
         if not job:
             raise HTTPException(404, "Job not found")
 
-        candidates = list(session.execute(select(Candidate)).scalars())
+        pool_stmt = select(Candidate)
+        candidate_condition = candidate_id_condition(Candidate.id, data_mode)
+        if candidate_condition is not None:
+            pool_stmt = pool_stmt.where(candidate_condition)
+        candidates = list(session.execute(pool_stmt).scalars())
         if not candidates:
             return MatchListOut(matches=[], elapsed_seconds=round(time.monotonic() - start_time, 3))
 
@@ -140,7 +146,7 @@ async def run_matching(
                 job_id=job_id,
                 candidate_count=len(out),
                 criteria_version=job.criteria_version,
-                sources_scanned={"note": "matched against full candidate pool at run time"},
+                sources_scanned={"note": f"matched against candidate pool at run time (data_mode={data_mode})"},
             ),
         )
         session.commit()
@@ -200,14 +206,17 @@ def get_match_summary(job_id: str, storage: BaseStorageBackend = Depends(get_sto
 def list_matches(
     job_id: str,
     top_n: int = Query(20, ge=1, le=200),
+    data_mode: str = Query("all", description="'all', 'real', or 'mock'"),
     storage: BaseStorageBackend = Depends(get_storage),
 ):
     start_time = time.monotonic()
     with storage.session() as session:
+        match_stmt = select(Match).where(Match.job_id == job_id)
+        data_mode_condition = candidate_id_condition(Match.candidate_id, data_mode)
+        if data_mode_condition is not None:
+            match_stmt = match_stmt.where(data_mode_condition)
         matches = list(
-            session.execute(
-                select(Match).where(Match.job_id == job_id).order_by(Match.score.desc()).limit(top_n)
-            ).scalars()
+            session.execute(match_stmt.order_by(Match.score.desc()).limit(top_n)).scalars()
         )
         candidate_ids = [m.candidate_id for m in matches]
         candidates_by_id = {

@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { useAuthStore } from "../stores/auth-store";
 import { useDashboardStore } from "../stores/dashboard-store";
+import { useDataModeStore } from "../stores/data-mode-store";
 import { StatTile } from "../components/dashboard/stat-tile";
 import { SectionCard } from "../components/dashboard/section-card";
 import { InflowChart } from "../components/dashboard/inflow-chart";
@@ -35,11 +36,12 @@ function greeting(): string {
 export function DashboardPage() {
   const user = useAuthStore((s) => s.user);
   const { summary, loading, fetchSummary } = useDashboardStore();
+  const dataMode = useDataModeStore((s) => s.dataMode);
   const location = useLocation();
 
   useEffect(() => {
-    fetchSummary().catch(() => {});
-  }, []);
+    fetchSummary(dataMode).catch(() => {});
+  }, [dataMode]);
 
   useEffect(() => {
     // The "Needs attention" tile links here with a hash instead of off to

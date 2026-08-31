@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { api } from "../lib/api";
 import { useToastStore } from "./toast-store";
+import { useDataModeStore } from "./data-mode-store";
 import type { Candidate, CandidateFacets, ScanResult } from "../lib/types";
 
 const PAGE_SIZE = 50;
@@ -137,6 +138,7 @@ export const useCandidatesStore = create<CandidatesState>()(
               work_visa_status: workVisaStatuses.length ? workVisaStatuses : undefined,
               experience_min: experienceMin,
               experience_max: experienceMax,
+              data_mode: useDataModeStore.getState().dataMode,
             });
             set({ candidates: result.candidates, total: result.total, lastElapsedSeconds: result.elapsed_seconds });
           } finally {
@@ -146,7 +148,7 @@ export const useCandidatesStore = create<CandidatesState>()(
         fetchFacets: async () => {
           set({ facetsLoading: true });
           try {
-            const facets = await api.getCandidateFacets();
+            const facets = await api.getCandidateFacets(useDataModeStore.getState().dataMode);
             set({ facets });
           } finally {
             set({ facetsLoading: false });

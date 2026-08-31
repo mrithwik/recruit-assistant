@@ -16,6 +16,7 @@ from datetime import datetime, timedelta
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.data_classification import candidate_id_condition, is_mock_source_condition
 from app.models.db import Candidate, EmailAccount, IngestScanHistoryEntry, Job, Match, ResumeSource, SearchHistoryEntry
 from app.models.enums import MatchTier
 from app.models.schemas import (
@@ -37,16 +38,27 @@ RECENT_ACTIVITY_LIMIT = 10
 ORDINAL_TIERS = [MatchTier.POOR, MatchTier.AVERAGE, MatchTier.GOOD, MatchTier.GREAT]
 
 
-def _kpis(session: Session) -> tuple[DashboardKPIs, int]:
+def _kpis(session: Session, data_mode: str) -> tuple[DashboardKPIs, int]:
     active_jobs = session.execute(select(func.count()).select_from(Job).where(Job.active.is_(True))).scalar_one()
-    total_candidates = session.execute(select(func.count()).select_from(Candidate)).scalar_one()
-    matches_scored = session.execute(select(func.count()).select_from(Match)).scalar_one()
+    candidate_condition = candidate_id_condition(Candidate.id, data_mode)
+    total_stmt = select(func.count()).select_from(Candidate)
+    if candidate_condition is not None:
+        total_stmt = total_stmt.where(candidate_condition)
+    total_candidates = session.execute(total_stmt).scalar_one()
+
+    match_condition = candidate_id_condition(Match.candidate_id, data_mode)
+    matches_stmt = select(func.count()).select_from(Match)
+    attention_stmt = select(Match.tier, Match.missing_info)
+    if match_condition is not None:
+        matches_stmt = matches_stmt.where(match_condition)
+        attention_stmt = attention_stmt.where(match_condition)
+    matches_scored = session.execute(matches_stmt).scalar_one()
 
     # A single match can be both red-flagged AND missing info — summing two
     # separate counts double-counted it, so the KPI tile could show a bigger
     # number than the "Needs attention" list below ever could (that list
     # counts each match once, on the `or`). Count matches once instead.
-    attention_rows = session.execute(select(Match.tier, Match.missing_info)).all()
+    attention_rows = session.execute(attention_stmt).all()
     red_flagged = sum(1 for tier, _ in attention_rows if tier == MatchTier.RED_FLAG.value)
     needs_attention = sum(1 for tier, missing_info in attention_rows if tier == MatchTier.RED_FLAG.value or missing_info)
 
@@ -65,17 +77,18 @@ def _kpis(session: Session) -> tuple[DashboardKPIs, int]:
     return kpis, red_flagged
 
 
-def _inflow_trend(session: Session) -> list[InflowDay]:
+def _inflow_trend(session: Session, data_mode: str) -> list[InflowDay]:
     since = datetime.utcnow() - timedelta(days=INFLOW_DAYS)
-    rows = session.execute(
-        select(
-            func.strftime("%Y-%m-%d", ResumeSource.date_submitted).label("day"),
-            ResumeSource.origin,
-            func.count(),
-        )
-        .where(ResumeSource.date_submitted >= since)
-        .group_by("day", ResumeSource.origin)
-    ).all()
+    stmt = select(
+        func.strftime("%Y-%m-%d", ResumeSource.date_submitted).label("day"),
+        ResumeSource.origin,
+        func.count(),
+    ).where(ResumeSource.date_submitted >= since)
+    if data_mode == "real":
+        stmt = stmt.where(~is_mock_source_condition())
+    elif data_mode == "mock":
+        stmt = stmt.where(is_mock_source_condition())
+    rows = session.execute(stmt.group_by("day", ResumeSource.origin)).all()
 
     by_day: dict[str, dict[str, int]] = {}
     for day, origin, count in rows:
@@ -85,36 +98,50 @@ def _inflow_trend(session: Session) -> list[InflowDay]:
     return [InflowDay(date=d, email=by_day.get(d, {}).get("email", 0), folder=by_day.get(d, {}).get("folder", 0)) for d in days]
 
 
-def _tier_distribution(session: Session) -> list[TierCount]:
-    rows = session.execute(select(Match.tier, func.count()).group_by(Match.tier)).all()
+def _tier_distribution(session: Session, data_mode: str) -> list[TierCount]:
+    stmt = select(Match.tier, func.count())
+    match_condition = candidate_id_condition(Match.candidate_id, data_mode)
+    if match_condition is not None:
+        stmt = stmt.where(match_condition)
+    rows = session.execute(stmt.group_by(Match.tier)).all()
     counts = {tier: count for tier, count in rows}
     return [TierCount(tier=t.value, count=counts.get(t.value, 0)) for t in ORDINAL_TIERS]
 
 
-def _top_skills(session: Session) -> list[NamedCount]:
-    skill_lists = session.execute(select(Candidate.skills)).scalars().all()
+def _top_skills(session: Session, data_mode: str) -> list[NamedCount]:
+    stmt = select(Candidate.skills)
+    candidate_condition = candidate_id_condition(Candidate.id, data_mode)
+    if candidate_condition is not None:
+        stmt = stmt.where(candidate_condition)
+    skill_lists = session.execute(stmt).scalars().all()
     counter: Counter[str] = Counter()
     for skills in skill_lists:
         counter.update(s.strip().lower() for s in (skills or []) if s.strip())
     return [NamedCount(label=skill, count=count) for skill, count in counter.most_common(TOP_SKILLS_LIMIT)]
 
 
-def _visa_breakdown(session: Session) -> list[NamedCount]:
-    rows = session.execute(select(Candidate.work_visa_status, func.count()).group_by(Candidate.work_visa_status)).all()
+def _visa_breakdown(session: Session, data_mode: str) -> list[NamedCount]:
+    stmt = select(Candidate.work_visa_status, func.count())
+    candidate_condition = candidate_id_condition(Candidate.id, data_mode)
+    if candidate_condition is not None:
+        stmt = stmt.where(candidate_condition)
+    rows = session.execute(stmt.group_by(Candidate.work_visa_status)).all()
     rows = [(status, count) for status, count in rows if status and status != "unknown"]
     rows.sort(key=lambda r: r[1], reverse=True)
     return [NamedCount(label=status.replace("_", " ").upper(), count=count) for status, count in rows[:VISA_BREAKDOWN_LIMIT]]
 
 
-def _jobs_snapshot(session: Session) -> list[JobSnapshot]:
+def _jobs_snapshot(session: Session, data_mode: str) -> list[JobSnapshot]:
     jobs = session.execute(select(Job).where(Job.active.is_(True)).order_by(Job.created_at.desc())).scalars().all()
+    match_condition = candidate_id_condition(Match.candidate_id, data_mode)
     snapshots = []
     for job in jobs:
-        agg = session.execute(
-            select(func.count(func.distinct(Match.candidate_id)), func.max(Match.score), func.max(Match.matched_at)).where(
-                Match.job_id == job.id
-            )
-        ).one()
+        agg_stmt = select(
+            func.count(func.distinct(Match.candidate_id)), func.max(Match.score), func.max(Match.matched_at)
+        ).where(Match.job_id == job.id)
+        if match_condition is not None:
+            agg_stmt = agg_stmt.where(match_condition)
+        agg = session.execute(agg_stmt).one()
         candidate_count, top_score, last_matched_at = agg
         snapshots.append(
             JobSnapshot(
@@ -128,8 +155,12 @@ def _jobs_snapshot(session: Session) -> list[JobSnapshot]:
     return snapshots
 
 
-def _needs_attention(session: Session) -> list[AttentionItem]:
-    matches = session.execute(select(Match).order_by(Match.matched_at.desc()).limit(200)).scalars().all()
+def _needs_attention(session: Session, data_mode: str) -> list[AttentionItem]:
+    stmt = select(Match)
+    match_condition = candidate_id_condition(Match.candidate_id, data_mode)
+    if match_condition is not None:
+        stmt = stmt.where(match_condition)
+    matches = session.execute(stmt.order_by(Match.matched_at.desc()).limit(200)).scalars().all()
     items = []
     for m in matches:
         is_red_flag = m.tier == MatchTier.RED_FLAG.value
@@ -206,16 +237,19 @@ def _recent_activity(session: Session) -> list[ActivityItem]:
     return merged[:RECENT_ACTIVITY_LIMIT]
 
 
-def build_dashboard_summary(session: Session) -> DashboardSummary:
-    kpis, red_flagged_count = _kpis(session)
+def build_dashboard_summary(session: Session, data_mode: str = "all") -> DashboardSummary:
+    # recent_activity is deliberately left unfiltered — it's a log of scans
+    # and maintenance runs, not a candidate-derived widget, and a scan's own
+    # description already says what it touched (email/folder/maintenance).
+    kpis, red_flagged_count = _kpis(session, data_mode)
     return DashboardSummary(
         kpis=kpis,
-        inflow_trend=_inflow_trend(session),
-        tier_distribution=_tier_distribution(session),
+        inflow_trend=_inflow_trend(session, data_mode),
+        tier_distribution=_tier_distribution(session, data_mode),
         red_flagged_count=red_flagged_count,
-        top_skills=_top_skills(session),
-        visa_breakdown=_visa_breakdown(session),
-        jobs_snapshot=_jobs_snapshot(session),
-        needs_attention=_needs_attention(session),
+        top_skills=_top_skills(session, data_mode),
+        visa_breakdown=_visa_breakdown(session, data_mode),
+        jobs_snapshot=_jobs_snapshot(session, data_mode),
+        needs_attention=_needs_attention(session, data_mode),
         recent_activity=_recent_activity(session),
     )

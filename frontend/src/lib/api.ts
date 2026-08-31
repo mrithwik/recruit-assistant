@@ -85,6 +85,7 @@ export const api = {
     work_visa_status?: string[];
     experience_min?: number;
     experience_max?: number;
+    data_mode?: string;
   }) => {
     const qs = new URLSearchParams();
     if (params?.date_start) qs.set("date_start", params.date_start);
@@ -99,10 +100,15 @@ export const api = {
     for (const s of params?.work_visa_status ?? []) qs.append("work_visa_status", s);
     if (params?.experience_min !== undefined) qs.set("experience_min", String(params.experience_min));
     if (params?.experience_max !== undefined) qs.set("experience_max", String(params.experience_max));
+    if (params?.data_mode) qs.set("data_mode", params.data_mode);
     const suffix = qs.toString() ? `?${qs.toString()}` : "";
     return request<import("./types").CandidateListResult>(`/candidates${suffix}`);
   },
-  getCandidateFacets: () => request<import("./types").CandidateFacets>("/candidates/facets"),
+  getCandidateFacets: (dataMode?: string) =>
+    request<import("./types").CandidateFacets>(
+      `/candidates/facets${dataMode ? `?data_mode=${dataMode}` : ""}`,
+    ),
+  getDataModeCounts: () => request<import("./types").DataModeCounts>("/candidates/data-mode-counts"),
   getCandidate: (id: string) => request<import("./types").CandidateDetail>(`/candidates/${id}`),
   listCandidateSources: (id: string) =>
     request<import("./types").ResumeSourceInfo[]>(`/candidates/${id}/sources`),
@@ -115,10 +121,15 @@ export const api = {
       `/candidates/${id}/sources/${sourceId}/text`,
     ),
 
-  runMatching: (jobId: string, topN: number) =>
-    request<import("./types").MatchListResult>(`/matches/run/${jobId}?top_n=${topN}`, { method: "POST" }),
-  listMatches: (jobId: string, topN: number) =>
-    request<import("./types").MatchListResult>(`/matches/${jobId}?top_n=${topN}`),
+  runMatching: (jobId: string, topN: number, dataMode?: string) =>
+    request<import("./types").MatchListResult>(
+      `/matches/run/${jobId}?top_n=${topN}${dataMode ? `&data_mode=${dataMode}` : ""}`,
+      { method: "POST" },
+    ),
+  listMatches: (jobId: string, topN: number, dataMode?: string) =>
+    request<import("./types").MatchListResult>(
+      `/matches/${jobId}?top_n=${topN}${dataMode ? `&data_mode=${dataMode}` : ""}`,
+    ),
   getMatchSummary: (jobId: string) =>
     request<import("./types").JobMatchSummary>(`/matches/summary/${jobId}`),
   flagMatch: (matchId: string, color: "green" | "red", note: string) =>
@@ -175,7 +186,10 @@ export const api = {
     }),
   removeScheduledSource: (id: string) => request<void>(`/scheduled-sources/${id}`, { method: "DELETE" }),
 
-  dashboardSummary: () => request<import("./types").DashboardSummary>("/dashboard/summary"),
+  dashboardSummary: (dataMode?: string) =>
+    request<import("./types").DashboardSummary>(
+      `/dashboard/summary${dataMode ? `?data_mode=${dataMode}` : ""}`,
+    ),
 
   generateSampleData: (initial: number, followups: number, upskill: number, seed: number) =>
     request<import("./types").GenerateSampleDataResult>("/dev-tools/generate-sample-data", {

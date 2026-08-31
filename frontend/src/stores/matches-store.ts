@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { api } from "../lib/api";
 import { useToastStore } from "./toast-store";
+import { useDataModeStore } from "./data-mode-store";
 import type { Match, ScanResult } from "../lib/types";
 
 const POLL_INTERVAL_MS = 1500;
@@ -86,12 +87,12 @@ export const useMatchesStore = create<MatchesState>()(
         setTopN: (n) => set({ topN: n }),
         loadMatches: async (jobId) => {
           set({ loading: true });
-          const result = await api.listMatches(jobId, get().topN);
+          const result = await api.listMatches(jobId, get().topN, useDataModeStore.getState().dataMode);
           set({ matches: result.matches, loading: false, lastElapsedSeconds: result.elapsed_seconds, lastLoadWasFullRun: false });
         },
         runMatching: async (jobId) => {
           set({ loading: true });
-          const result = await api.runMatching(jobId, get().topN);
+          const result = await api.runMatching(jobId, get().topN, useDataModeStore.getState().dataMode);
           set({ matches: result.matches, loading: false, lastElapsedSeconds: result.elapsed_seconds, lastLoadWasFullRun: true });
           return result.matches;
         },
