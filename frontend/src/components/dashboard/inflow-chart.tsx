@@ -24,6 +24,13 @@ export function InflowChart({ data }: { data: InflowDay[] }) {
   const [emailColor, folderColor] = palette.categorical;
   const maxStacked = Math.max(0, ...data.map((d) => d.email + d.folder));
   const ticks = integerTicks(maxStacked);
+  // A stacked series that's flat zero across the whole window still draws
+  // its stroke line exactly on the boundary of the series below it — since
+  // it's drawn second (on top), that stroke visually overwrites the other
+  // series' edge, making an all-email chart render as if it were all
+  // folder (or vice versa). Only render a series that actually has data.
+  const hasEmail = data.some((d) => d.email > 0);
+  const hasFolder = data.some((d) => d.folder > 0);
 
   return (
     <ResponsiveContainer width="100%" height={220}>
@@ -62,24 +69,28 @@ export function InflowChart({ data }: { data: InflowDay[] }) {
           iconSize={8}
           formatter={(value) => (value === "email" ? "Email" : "Folder")}
         />
-        <Area
-          type="monotone"
-          dataKey="email"
-          stackId="1"
-          stroke={emailColor}
-          strokeWidth={2}
-          fill={emailColor}
-          fillOpacity={0.15}
-        />
-        <Area
-          type="monotone"
-          dataKey="folder"
-          stackId="1"
-          stroke={folderColor}
-          strokeWidth={2}
-          fill={folderColor}
-          fillOpacity={0.15}
-        />
+        {hasEmail && (
+          <Area
+            type="monotone"
+            dataKey="email"
+            stackId="1"
+            stroke={emailColor}
+            strokeWidth={2}
+            fill={emailColor}
+            fillOpacity={0.15}
+          />
+        )}
+        {hasFolder && (
+          <Area
+            type="monotone"
+            dataKey="folder"
+            stackId="1"
+            stroke={folderColor}
+            strokeWidth={2}
+            fill={folderColor}
+            fillOpacity={0.15}
+          />
+        )}
       </AreaChart>
     </ResponsiveContainer>
   );
