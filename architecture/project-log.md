@@ -611,6 +611,155 @@ confirmed directly via `sqlite3` that the real database was completely unaffecte
 transiently 401'd and shown a login screen during that window, since its bearer token
 wouldn't have validated against the fresh container's independently-generated secret key.
 
+## 21. Real-Gmail scan performance — async, concurrent, backgrounded
+
+Real-Gmail testing (a synthetic ~10,000-persona dataset generated for load testing — resumes,
+follow-ups, resume updates, casual check-ins, and back-and-forth threads spanning 10 years,
+delivered via real SMTP + Gmail API insert) surfaced a real architectural gap before a full
+scan was ever attempted against it: `GmailIngestor.scan()` did two sequential blocking network
+calls per matched message (full message fetch, then attachment fetch) with no concurrency at
+all, using a sync `httpx.Client` directly inside an `async def` route with no threadpool
+offload. At real-mailbox scale (~11,000+ attachment-bearing messages) that's 20,000+
+sequential round-trips — estimated at 1-3+ hours — and because the sync client blocked the
+event loop directly, the *entire* single-process backend would have frozen (no other request
+served) for the whole duration, with the triggering HTTP request held open the entire time.
+
+Fixed in three parts:
+
+1. **Async + bounded-concurrent ingestion.** `ResumeIngestor.scan()` is now an async generator
+   (`AsyncIterator[IngestedResume]`); `GmailIngestor`/`OutlookIngestor` use `httpx.AsyncClient`
+   and fetch each page's messages concurrently via the existing `bounded_gather` helper (new
+   `max_concurrent_email_fetches` setting, default 15 — Gmail starts returning 429s somewhere
+   around 25 concurrent, found via the load-test delivery run). Added 429/5xx retry with
+   exponential backoff (`_get_with_retry`) and trimmed the Gmail `fields` param to only what
+   `_walk_parts`/header-parsing actually reads. `FolderIngestor`/`MockEmailIngestor` updated to
+   the same async-generator interface for parity (trivial — disk/in-memory, no real concurrency
+   need there). `ingest_service.run_scan`'s consuming loop changed from `for` to `async for`.
+
+2. **Background job execution.** Even with concurrency, a real scan can still run for
+   several minutes to tens of minutes — long enough that holding one HTTP request open for it
+   is bad UX and risks a browser/proxy timeout. `POST /scan/folders` and
+   `/scan/email-accounts` now kick the scan off as an `asyncio.create_task` and return a job id
+   immediately (202), tracked in a new in-memory `app/scanning/job_registry.py` (same
+   module-global pattern as `dependencies.py`); a new `GET /scan/jobs/{id}` endpoint reports
+   status/result. Frontend (`scan-store.ts`) updated to poll every 1.5s instead of awaiting the
+   POST directly; `scan-page.tsx` needed no changes since the store still resolves/rejects the
+   same way once the job finishes.
+
+3. **Verification** (deliberately *not* run against the real connected account per explicit
+   instruction — full 66→71-test suite plus three new targeted tests instead): a concurrency
+   test proving `GmailIngestor.scan()` actually overlaps fetches while respecting the
+   concurrency cap (mirrors the existing `test_matcher_concurrency.py` pattern), job-registry
+   lifecycle tests, and the existing attachment-handling tests rewritten for the new
+   async/`_extract_one` shape. Full suite green; frontend typechecks and builds clean.
+
+## 22. Scan-job resilience — checkpointing, duplicate-scan guard, live progress
+
+Before attempting a real scan against the load-test account, walked through what a
+30-40 minute background job (see section 21) would actually mean in practice, and found
+three more real gaps, all fixed without running anything against the live account:
+
+1. **No partial persistence.** `run_scan()` did one `session.commit()` at the very end —
+   a failure near the end of a long run (e.g. retries finally exhausted on a persistent
+   network blip) would have discarded the entire run's work. Added `checkpoint_every`
+   (default 500) — commits (and flushes any pending embeddings) periodically during the
+   loop via a `_flush_checkpoint()` helper, reached through a `finally` block so it still
+   fires on the "already-seen, skip" `continue` path too. Verified with a test that makes
+   the ingestor raise partway through and confirms the already-processed candidates
+   survived in the DB despite the run never completing.
+
+2. **Duplicate-scan race.** The "scanning" button-disable state lives in browser JS and
+   isn't persisted — a page refresh mid-scan resets it, and a re-click would start a
+   second job against the same account with no visibility into the first one's in-flight
+   dedup state (each job preloads its own fingerprint cache at start), risking duplicate
+   candidates. `job_registry.py` now tracks active scan scopes (same account_ids / same
+   folder_paths) and rejects a second concurrent request for the same scope with a 409.
+
+3. **No real progress.** The existing progress bar was a time-based guess derived from
+   unrelated sample-data counts — not accurate for a real scan and liable to look "stuck"
+   for a long time. `run_scan()` gained an `on_progress` callback fired after every resume
+   (cheap, in-memory only); `ScanJob`/`ScanJobOut` gained a `progress` field the frontend
+   polls and displays as real running counts (resumes processed / created / updated /
+   skipped) alongside the existing simulated bar.
+
+All verified via new/updated tests (66 → 78 passing) — deliberately not against the real
+connected account, per explicit instruction to hold off on actually running it.
+
+## 23. Reattach-after-refresh + scan-job registry pruning
+
+Closed the one remaining soft gap from section 22: `scanning`/`scanProgress` live only in
+browser JS state, so a page refresh (or a second tab) during a real scan loses visibility
+into it, even though the job keeps running server-side regardless. `scan-store.ts` now
+persists `activeJobId` to `localStorage` (same mechanism already used for `lastResult` etc.);
+on Scan Sources page mount, `resumeActiveScanIfAny()` checks it — still running, resume
+polling exactly as if nothing happened; already finished while away, surface the result/toast
+immediately; 404 (backend restarted since — the job registry is deliberately in-memory only,
+see section 21), silently drop the stale id. Refactored the shared "wait for job, apply
+result, toast" logic into one `followJob()` helper used by both the normal button-click path
+and the reattach path, with a flag controlling whether it toasts itself (the normal path
+already gets a toast from the page's own try/catch; only the reattach path needs to raise one
+on its own, since there's no page-level caller for it to land in).
+
+Also added a cap on the job registry (`MAX_STORED_JOBS = 50`, pruning oldest finished jobs
+once over the limit, never a running one) — the registry had no eviction at all before this,
+which would slowly accumulate every scan ever run over months of the app staying open.
+
+Verified via 4 new job-registry tests (pruning, and pruning never touching a running job) plus
+a frontend typecheck/build; still not run against the real connected account.
+
+## 24. Real scan bug fixes + split mock mode into two live-toggleable flags
+
+Two real bugs, found by actually attempting a scan against the load-test account rather than
+just reasoning about the code:
+
+**24a. Naive/aware datetime crash.** The scan job failed after 27s with "can't compare
+offset-naive and offset-aware datetimes" — the frontend's date-range picker sends
+`toISOString()` (a "Z"-suffixed, timezone-aware string), Pydantic parses that as aware, but
+every `date_submitted` elsewhere in the codebase is naive UTC (`datetime.utcnow()`). Fixed at
+the request boundary: `ScanFolderRequest`/`ScanEmailRequest` now normalize `date_start`/
+`date_end` to naive UTC via a `field_validator`, so nothing downstream needs to know
+timezones exist. (Also explained why no toast/result card appeared — the frontend's poll
+loop had stopped well before the 27s failure, most likely the tab losing focus or being
+navigated away before it completed; a real gap closed properly in the next stage.)
+
+**24b. Silent mock-mode scan.** Separately — and this was the bigger finding — the actual
+scan that had "failed" was never going to hit the real connected Gmail account at all:
+`USE_MOCK=true` controlled both the LLM client and the email ingestor with one flag, so
+"Scan email now" against the real account silently ran `MockEmailIngestor` against fixture
+data instead. Fixed by splitting into two independent settings, `USE_MOCK_LLM` and
+`USE_MOCK_EMAIL`, and — per explicit request — making both live-toggleable from the UI
+without a backend restart:
+
+- `app/runtime_settings.py` — new module-global pair (mirrors `dependencies.py`'s pattern),
+  initialized from `Settings` at startup, then mutable via `PATCH /api/v1/settings/mock-mode`.
+- `DispatcherLLMClient` (`matching/llm_client.py`) — wraps a `MockLLMClient` and (if a
+  provider key is configured) a real client, routing every call to whichever
+  `runtime_settings.get_use_mock_llm()` says *at call time* rather than a choice baked in once
+  at startup. `build_llm_client()` now always returns this dispatcher.
+- Email-mock selection (`build_email_ingestor`, the scheduler, dev-tools sample-data seeding)
+  switched from the frozen `settings.use_mock` to the live `runtime_settings.get_use_mock_email()`.
+- New `GET`/`PATCH /api/v1/settings/mock-mode` route — the PATCH guardrail checks the
+  *actual* `DispatcherLLMClient.real_client is not None`, not a fresh re-read of `.env`, since
+  a key added to `.env` after the backend already started wouldn't retroactively populate the
+  already-built dispatcher (caught this exact gap in self-review before it shipped).
+- `Settings.expose_mock_mode_toggle` (default on) lets the UI control be hidden entirely if
+  this app is ever handed to someone else.
+- Frontend: new `Toggle` component, two clearly-labeled independent toggles on the Scan
+  Sources page (email source, LLM processing) with a cost warning on the real-LLM one and the
+  guardrail message surfaced inline when no key is configured.
+
+`USE_MOCK` retired outright (not kept as a fallback) — every `.env`/`.env.example`/
+`docker-compose.yml`/CI-workflow/doc reference updated to the two new flags.
+
+## 25. Reattach-after-refresh was itself a real gap the datetime bug exposed
+
+Investigating why no toast appeared for the failed scan surfaced the exact gap flagged as a
+"soft, non-blocking" risk two stages earlier: the poll loop's state lives only in browser JS,
+so a refresh (or the tab simply losing focus long enough) silently loses visibility into an
+in-flight scan even though it keeps running server-side. Already fixed by this point (see the
+reattach-after-refresh + job-registry-pruning work) — worth noting here since this was the
+first time that fix's absence was actually *felt*, not just anticipated.
+
 ## Cross-references
 
 - [Design Decisions](design-decisions.md) — the ADRs behind each choice above

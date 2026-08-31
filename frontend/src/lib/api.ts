@@ -51,15 +51,26 @@ export const api = {
     request<{ deleted: number }>("/jobs/bulk-delete", { method: "POST", body: JSON.stringify({ job_ids }) }),
 
   scanFolders: (folder_paths: string[], include_subfolders: boolean, date_start?: string, date_end?: string) =>
-    request<import("./types").ScanResult>("/scan/folders", {
+    request<import("./types").ScanJob>("/scan/folders", {
       method: "POST",
       body: JSON.stringify({ folder_paths, include_subfolders, date_start, date_end }),
     }),
   scanEmailAccounts: (account_ids: string[], date_start?: string, date_end?: string) =>
-    request<import("./types").ScanResult>("/scan/email-accounts", {
+    request<import("./types").ScanJob>("/scan/email-accounts", {
       method: "POST",
       body: JSON.stringify({ account_ids, date_start, date_end }),
     }),
+  getScanJob: (jobId: string) => request<import("./types").ScanJob>(`/scan/jobs/${jobId}`),
+
+  getOAuthStatus: () => request<import("./types").OAuthStatus>("/email-accounts/oauth-status"),
+
+  listMaintenanceTasks: () => request<import("./types").MaintenanceTask[]>("/maintenance/tasks"),
+  runMaintenanceTask: (taskId: string) =>
+    request<import("./types").ScanJob>(`/maintenance/tasks/${taskId}/run`, { method: "POST" }),
+
+  getMockMode: () => request<import("./types").MockMode>("/settings/mock-mode"),
+  updateMockMode: (payload: { use_mock_llm?: boolean; use_mock_email?: boolean }) =>
+    request<import("./types").MockMode>("/settings/mock-mode", { method: "PATCH", body: JSON.stringify(payload) }),
 
   listCandidates: (params?: {
     date_start?: string;
@@ -69,6 +80,11 @@ export const api = {
     sort?: string;
     limit?: number;
     offset?: number;
+    skill?: string[];
+    employment_status?: string[];
+    work_visa_status?: string[];
+    experience_min?: number;
+    experience_max?: number;
   }) => {
     const qs = new URLSearchParams();
     if (params?.date_start) qs.set("date_start", params.date_start);
@@ -78,12 +94,22 @@ export const api = {
     if (params?.sort) qs.set("sort", params.sort);
     if (params?.limit !== undefined) qs.set("limit", String(params.limit));
     if (params?.offset !== undefined) qs.set("offset", String(params.offset));
+    for (const s of params?.skill ?? []) qs.append("skill", s);
+    for (const s of params?.employment_status ?? []) qs.append("employment_status", s);
+    for (const s of params?.work_visa_status ?? []) qs.append("work_visa_status", s);
+    if (params?.experience_min !== undefined) qs.set("experience_min", String(params.experience_min));
+    if (params?.experience_max !== undefined) qs.set("experience_max", String(params.experience_max));
     const suffix = qs.toString() ? `?${qs.toString()}` : "";
     return request<import("./types").CandidateListResult>(`/candidates${suffix}`);
   },
+  getCandidateFacets: () => request<import("./types").CandidateFacets>("/candidates/facets"),
   getCandidate: (id: string) => request<import("./types").CandidateDetail>(`/candidates/${id}`),
   listCandidateSources: (id: string) =>
     request<import("./types").ResumeSourceInfo[]>(`/candidates/${id}/sources`),
+  scanAll: () => request<import("./types").ScanJob>("/scan/all", { method: "POST" }),
+  rescanMatched: (jobId: string) =>
+    request<import("./types").ScanJob>(`/matches/${jobId}/rescan-matched`, { method: "POST" }),
+  rescanCandidate: (id: string) => request<import("./types").ScanJob>(`/candidates/${id}/rescan`, { method: "POST" }),
   getCandidateSourceText: (id: string, sourceId: string) =>
     request<{ origin: string; source_ref: string; date_submitted: string; text: string }>(
       `/candidates/${id}/sources/${sourceId}/text`,

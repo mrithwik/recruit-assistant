@@ -11,6 +11,8 @@ import {
   Flag,
   Mail,
   Play,
+  RefreshCw,
+  Sparkles,
   Users,
 } from "lucide-react";
 import { useJobsStore } from "../stores/jobs-store";
@@ -62,8 +64,22 @@ function sortMatches(list: Match[], sort: SortKey): Match[] {
 
 export function ResultsPage() {
   const { jobs, selectedJobId, selectJob, fetchJobs } = useJobsStore();
-  const { matches, topN, setTopN, loadMatches, runMatching, flag, loading, lastElapsedSeconds, lastLoadWasFullRun } =
-    useMatchesStore();
+  const {
+    matches,
+    topN,
+    setTopN,
+    loadMatches,
+    runMatching,
+    flag,
+    loading,
+    lastElapsedSeconds,
+    lastLoadWasFullRun,
+    rescanMatched,
+    rescanningMatched,
+    rescanMatchedProgress,
+    activeRescanForJobId,
+    resumeRescanIfAny,
+  } = useMatchesStore();
   const push = useToastStore((s) => s.push);
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -73,29 +89,42 @@ export function ResultsPage() {
   const [comparing, setComparing] = useState(false);
   const [sort, setSort] = useState<SortKey>("best_match");
   const { pct, remainingSeconds, overrun } = useSimulatedProgress(15, loading);
+  const { pct: rescanPct, remainingSeconds: rescanRemaining, overrun: rescanOverrun } = useSimulatedProgress(
+    Math.max(10, matches.length * 3),
+    rescanningMatched,
+  );
 
   const selectedJob = jobs.find((j) => j.id === selectedJobId);
 
   useEffect(() => {
     if (jobs.length === 0) fetchJobs();
+    // Reattaches to an already-running "Check for updates" job if one was
+    // started before a refresh/reopen (see matches-store's activeRescanJobId).
+    resumeRescanIfAny().catch(() => {});
   }, []);
 
   useEffect(() => {
+    // Arriving here via a "View results" link elsewhere (job param in the
+    // URL) is an explicit request to see this job's results, so that one
+    // load happens automatically. Changing the job or Top N afterward via
+    // the controls on this page does not auto-reload — see handleLoad,
+    // bound to the "Load results" button below.
     const fromQuery = searchParams.get("job");
-    if (fromQuery && fromQuery !== selectedJobId) selectJob(fromQuery);
+    if (fromQuery && fromQuery !== selectedJobId) {
+      selectJob(fromQuery);
+      loadMatches(fromQuery).catch(() => {});
+    }
   }, [searchParams]);
 
-  useEffect(() => {
+  function handleLoad() {
     if (!selectedJobId) return;
-    // Already-scored matches are cheap to re-fetch (a plain GET, limited
-    // to topN) — changing "Top" shouldn't force re-running the expensive
-    // LLM scoring pass again. Debounced so fast typing doesn't fire one
-    // request per keystroke.
-    const t = setTimeout(() => {
-      loadMatches(selectedJobId).catch(() => {});
-    }, 300);
-    return () => clearTimeout(t);
-  }, [selectedJobId, topN]);
+    loadMatches(selectedJobId).catch((e) => push(String(e), "error"));
+  }
+
+  function handleRescanMatched() {
+    if (!selectedJobId) return;
+    rescanMatched(selectedJobId).catch((e) => push(String(e), "error"));
+  }
 
   async function handleRun() {
     if (!selectedJobId) return;
@@ -136,10 +165,15 @@ export function ResultsPage() {
 
   const compareMatches = useMemo(() => matches.filter((m) => compareIds.has(m.id)), [matches, compareIds]);
   const sortedMatches = useMemo(() => sortMatches(matches, sort), [matches, sort]);
+  // Switching the job dropdown no longer auto-reloads (see handleLoad) —
+  // the currently-displayed matches can belong to a job other than the one
+  // now selected. Detect that rather than silently showing mismatched
+  // results under the new job's header.
+  const resultsAreStale = matches.length > 0 && matches[0].job_id !== selectedJobId;
 
   return (
     <div className="mx-auto max-w-4xl">
-      <PageHeader title="Candidate Results" description="LLM-scored matches for the selected job, ranked and color-coded by fit." />
+      <PageHeader title="Match Results" description="LLM-scored matches for the selected job, ranked and color-coded by fit." />
 
       <div className="mb-2 flex flex-wrap items-center gap-2">
         <select
@@ -165,14 +199,43 @@ export function ResultsPage() {
             className="w-12 bg-transparent text-center font-medium text-zinc-800 outline-none dark:text-zinc-100"
           />
         </div>
+        <Button variant="secondary" icon={<RefreshCw size={14} />} loading={loading} disabled={!selectedJobId} onClick={handleLoad}>
+          Load results
+        </Button>
         <Button icon={<Play size={14} />} loading={loading} disabled={!selectedJobId} onClick={handleRun}>
           Run matching
+        </Button>
+        <Button
+          variant="secondary"
+          icon={<Sparkles size={14} />}
+          loading={rescanningMatched}
+          disabled={!selectedJobId || matches.length === 0}
+          onClick={handleRescanMatched}
+          title="Bounded to just this job's matched candidates — faster than a full mailbox rescan"
+        >
+          Check for updates
         </Button>
         <SortSelect value={sort} onChange={setSort} options={SORT_OPTIONS} />
         {!loading && (
           <TimingBadge seconds={lastElapsedSeconds} label={lastLoadWasFullRun ? "Matched" : "Loaded"} />
         )}
       </div>
+
+      {rescanningMatched && activeRescanForJobId === selectedJobId && (
+        <div className="mb-4">
+          <ProgressBar
+            pct={rescanPct}
+            label="Checking matched candidates for updates…"
+            remainingSeconds={rescanRemaining}
+            overrun={rescanOverrun}
+          />
+          {rescanMatchedProgress && (
+            <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+              {rescanMatchedProgress.resumes_found} candidate(s) checked — {rescanMatchedProgress.candidates_updated} updated so far
+            </p>
+          )}
+        </div>
+      )}
 
       {selectedJob && (
         <p className="mb-5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-zinc-500 dark:text-zinc-400">
@@ -236,11 +299,18 @@ export function ResultsPage() {
         {matches.length === 0 && selectedJobId && (
           <EmptyState
             icon={<Users size={20} />}
-            title="No matches yet"
-            description="No candidates have been scored for this job yet. Scan a folder or mailbox on the Scan Sources tab first, then run matching."
+            title="No results loaded"
+            description="Click “Load results” to see this job's existing matches, or “Run matching” if it hasn't been scored yet."
           />
         )}
-        {sortedMatches.map((m) => (
+        {resultsAreStale && (
+          <EmptyState
+            icon={<Users size={20} />}
+            title="Switched jobs"
+            description="These results are for a different job. Click “Load results” to see matches for the one now selected."
+          />
+        )}
+        {!resultsAreStale && sortedMatches.map((m) => (
           <Card key={m.id} className="p-0">
             <div className="flex items-start justify-between gap-3 p-4">
               <div className="flex items-start gap-3">
@@ -268,6 +338,19 @@ export function ResultsPage() {
                     <SourceBadges sources={m.candidate.sources} />
                     <span className="text-zinc-300 dark:text-zinc-600">·</span>
                     Scored {new Date(m.matched_at).toLocaleDateString()}
+                    {m.candidate.email_link && (
+                      <>
+                        <span className="text-zinc-300 dark:text-zinc-600">·</span>
+                        <a
+                          href={m.candidate.email_link}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex items-center gap-1 text-indigo-600 hover:underline dark:text-indigo-400"
+                        >
+                          <Mail size={11} /> Open email
+                        </a>
+                      </>
+                    )}
                   </p>
                 </div>
               </div>

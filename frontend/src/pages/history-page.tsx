@@ -9,7 +9,7 @@ import { Input } from "../components/ui/input";
 import { EmptyState } from "../components/ui/empty-state";
 
 // Previously implicitly filtered by whichever job happened to be selected
-// elsewhere in the app (Candidate Results shares that selection), so this
+// elsewhere in the app (Match Results shares that selection), so this
 // page could look empty or partial without explaining why. Now always loads
 // every run and offers its own independent job filter + text search.
 export function HistoryPage() {
@@ -63,7 +63,7 @@ export function HistoryPage() {
       </div>
 
       {entries.length === 0 ? (
-        <EmptyState icon={<HistoryIcon size={20} />} title="No search runs recorded yet" description="Run matching from the Candidate Results tab to see history here." />
+        <EmptyState icon={<HistoryIcon size={20} />} title="No search runs recorded yet" description="Run matching from the Match Results tab to see history here." />
       ) : filtered.length === 0 ? (
         <p className="py-8 text-center text-sm text-zinc-400">No runs match this filter.</p>
       ) : (

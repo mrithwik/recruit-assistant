@@ -6,7 +6,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-os.environ["USE_MOCK"] = "true"
+os.environ["USE_MOCK_LLM"] = "true"
+os.environ["USE_MOCK_EMAIL"] = "true"
 
 
 @pytest.fixture

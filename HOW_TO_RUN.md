@@ -12,7 +12,8 @@ make setup              # installs backend deps into .venv, creates .env from .e
 make install-frontend   # installs frontend node_modules
 ```
 
-`.env` defaults to `USE_MOCK=true` — everything works with **zero API keys**.
+`.env` defaults to `USE_MOCK_LLM=true` and `USE_MOCK_EMAIL=true` — everything works with
+**zero API keys**. Both are independent and also live-toggleable from the Scan Sources page.
 
 ## 1. Start the backend (Terminal 1)
 
@@ -62,7 +63,7 @@ matching is discriminating between good/bad resumes yet.
 Edit `.env`:
 
 ```
-USE_MOCK=false
+USE_MOCK_LLM=false
 OPENROUTER_API_KEY=sk-or-...
 ```
 
@@ -128,7 +129,7 @@ lsof -ti :5173 | xargs kill -9   # frontend
 
 ## Troubleshooting
 
-- **"No LLM provider configured"** — set `USE_MOCK=true` in `.env`, or set an API key.
+- **"No LLM provider configured"** — set `USE_MOCK_LLM=true` in `.env`, or set an API key.
 - **Scan finds 0 resumes** — only `.pdf`, `.docx`, `.txt` are supported.
 - **Frontend loads but API calls fail** — make sure the backend (port 8000) is running;
   the frontend proxies `/api/*` to it and shows nothing useful if it's down.

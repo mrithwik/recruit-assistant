@@ -46,6 +46,7 @@ export interface Candidate {
   portfolio_url: string;
   sources: string[];
   history: { date: string; origin: string; note: string }[];
+  email_link: string;
 }
 
 export interface MatchSummaryItem {
@@ -59,8 +60,15 @@ export interface MatchSummaryItem {
   matched_at: string;
 }
 
+export interface CandidateMatchDetail extends MatchSummaryItem {
+  reasons: { matched: string[]; gaps: string[] };
+  missing_info: string[];
+  flags: Flag[];
+  judge_notes: string;
+}
+
 export interface CandidateDetail extends Candidate {
-  matches: MatchSummaryItem[];
+  matches: CandidateMatchDetail[];
 }
 
 export interface ResumeSourceInfo {
@@ -69,6 +77,14 @@ export interface ResumeSourceInfo {
   source_ref: string;
   date_submitted: string;
   additional_attachments: string[];
+  email_link: string;
+}
+
+export interface CandidateFacets {
+  skills: string[];
+  employment_statuses: string[];
+  work_visa_statuses: string[];
+  experience_years_max: number;
 }
 
 export interface JobMatchSummary {
@@ -155,6 +171,33 @@ export interface ScanResult {
   elapsed_seconds: number;
 }
 
+// A scan now runs as a background job instead of blocking the triggering
+// request (a real email scan can run long enough that holding one HTTP
+// request open for it risks a browser/proxy timeout) — POST /scan/folders
+// and /scan/email-accounts return this immediately with status "running";
+// poll GET /scan/jobs/{id} for progress.
+export interface ScanJob {
+  id: string;
+  status: "running" | "completed" | "failed";
+  started_at: string;
+  completed_at?: string;
+  result?: ScanResult;
+  progress?: ScanResult;
+  error?: string;
+}
+
+export interface OAuthStatus {
+  google_configured: boolean;
+  microsoft_configured: boolean;
+}
+
+export interface MaintenanceTask {
+  id: string;
+  label: string;
+  description: string;
+  pending_count: number;
+}
+
 export interface MatchListResult {
   matches: Match[];
   elapsed_seconds: number;
@@ -235,7 +278,7 @@ export interface AttentionItem {
 }
 
 export interface ActivityItem {
-  type: "scan" | "candidate";
+  type: "scan" | "candidate" | "ingest";
   timestamp: string;
   description: string;
   job_id: string;
@@ -252,4 +295,13 @@ export interface DashboardSummary {
   jobs_snapshot: JobSnapshot[];
   needs_attention: AttentionItem[];
   recent_activity: ActivityItem[];
+}
+
+// Runtime mock/real toggles — live-switchable from the UI without
+// restarting the backend, see backend/app/runtime_settings.py.
+export interface MockMode {
+  use_mock_llm: boolean;
+  use_mock_email: boolean;
+  real_llm_available: boolean;
+  expose_toggle: boolean;
 }

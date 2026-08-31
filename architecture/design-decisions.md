@@ -131,7 +131,10 @@ best."
 
 **Decision:** `matching/llm_client.py` — `LLMClient` ABC, `OpenRouterClient` as primary
 (model routing/fallback/cost visibility across providers from one integration),
-`OpenAIClient` as a direct fallback if OpenRouter fails, `MockLLMClient` for `USE_MOCK=true`.
+`OpenAIClient` as a direct fallback if OpenRouter fails, `MockLLMClient` for `USE_MOCK_LLM=true`
+(wrapped by `DispatcherLLMClient`, which routes to mock or real per-call based on the live
+runtime flag — see app/runtime_settings.py — so the UI's mock/real toggle takes effect without
+a backend restart).
 
 **Alternatives Considered:** OpenAI-only — loses OpenRouter's model flexibility (different
 models for triage/scoring/judge) and cross-provider fallback; hardcoding both SDKs into
@@ -147,7 +150,9 @@ every call site — couples every consumer to provider details.
 type-validated, 12-factor, fail-fast configuration.
 
 **Decision:** `app/config.py` — a single `Settings(BaseSettings)` class, env-driven,
-`USE_MOCK=true` by default so the app runs fully offline out of the box.
+`USE_MOCK_LLM=true` / `USE_MOCK_EMAIL=true` by default so the app runs fully offline out of
+the box. These two are also live-toggleable at runtime (see `app/runtime_settings.py`) since
+unlike the rest of Settings they need to be flippable from the UI without a restart.
 
 **Consequences:** Same pattern as Prodigon, same benefit: bad config fails at startup with a
 clear error, not a runtime surprise mid-scan.

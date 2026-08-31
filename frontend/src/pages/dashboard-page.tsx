@@ -22,6 +22,7 @@ import { RankedBarChart } from "../components/dashboard/ranked-bar-chart";
 import { JobsSnapshotList } from "../components/dashboard/jobs-snapshot-list";
 import { AttentionList } from "../components/dashboard/attention-list";
 import { ActivityFeed } from "../components/dashboard/activity-feed";
+import { PendingUpdatesBanner } from "../components/dashboard/pending-updates-banner";
 import { Button } from "../components/ui/button";
 
 function greeting(): string {
@@ -92,6 +93,8 @@ export function DashboardPage() {
           </Link>
         </div>
       </div>
+
+      <PendingUpdatesBanner />
 
       {isEmpty ? (
         <div className="flex flex-col items-center rounded-2xl border border-dashed border-zinc-200 px-6 py-16 text-center dark:border-zinc-800">

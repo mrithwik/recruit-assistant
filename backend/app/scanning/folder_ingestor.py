@@ -6,7 +6,7 @@ signal exists (folder-dropped resumes rarely carry a "submitted date").
 """
 
 import hashlib
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
 from datetime import datetime
 from pathlib import Path
 
@@ -31,11 +31,11 @@ class FolderIngestor(ResumeIngestor):
                 if path.is_file() and path.suffix.lower() in SUPPORTED_EXTENSIONS:
                     yield path
 
-    def scan(
+    async def scan(
         self,
         date_start: datetime | None = None,
         date_end: datetime | None = None,
-    ) -> Iterator[IngestedResume]:
+    ) -> AsyncIterator[IngestedResume]:
         for path in self._iter_files():
             mtime = datetime.fromtimestamp(path.stat().st_mtime)
             if date_start and mtime < date_start:

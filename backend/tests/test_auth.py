@@ -10,7 +10,8 @@ from fastapi.testclient import TestClient
 def client(tmp_path, monkeypatch):
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     monkeypatch.setenv("SQLITE_PATH", str(tmp_path / "test.db"))
-    monkeypatch.setenv("USE_MOCK", "true")
+    monkeypatch.setenv("USE_MOCK_LLM", "true")
+    monkeypatch.setenv("USE_MOCK_EMAIL", "true")
 
     from app.dependencies import get_settings
 

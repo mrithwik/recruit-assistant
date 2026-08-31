@@ -16,7 +16,7 @@ from app.config import Settings
 from app.dependencies import get_settings, get_storage
 from app.email_auth.oauth import build_google_flow, build_msal_app, delete_token, store_google_credentials, store_ms_cache
 from app.models.db import EmailAccount, User
-from app.models.schemas import EmailAccountOut
+from app.models.schemas import EmailAccountOut, OAuthStatusOut
 from app.storage.base import BaseStorageBackend
 
 router = APIRouter(prefix="/api/v1/email-accounts", tags=["email-accounts"])
@@ -31,6 +31,19 @@ router = APIRouter(prefix="/api/v1/email-accounts", tags=["email-accounts"])
 def list_accounts(storage: BaseStorageBackend = Depends(get_storage), _user: User = Depends(require_auth)):
     with storage.session() as session:
         return list(session.execute(select(EmailAccount)).scalars())
+
+
+@router.get("/oauth-status", response_model=OAuthStatusOut)
+def oauth_status(settings: Settings = Depends(get_settings), _user: User = Depends(require_auth)):
+    # Lets the Email Access page show setup steps *before* someone clicks
+    # Connect and hits a raw JSON error page — connect_google/connect_ms
+    # below already 400 on this, but that response never reaches the app's
+    # own UI since those routes are plain browser-navigation redirects, not
+    # fetch() calls the frontend could catch and render nicely.
+    return OAuthStatusOut(
+        google_configured=bool(settings.google_oauth_client_id),
+        microsoft_configured=bool(settings.ms_oauth_client_id),
+    )
 
 
 @router.get("/connect/google")
@@ -73,7 +86,7 @@ def callback_google(
         )
         session.add(account)
         session.commit()
-    return RedirectResponse("/settings/email-access?connected=gmail")
+    return RedirectResponse(f"{settings.frontend_base_url}/app/email-access?connected=gmail")
 
 
 @router.get("/connect/microsoft")
@@ -125,7 +138,7 @@ def callback_microsoft(
         )
         session.add(account)
         session.commit()
-    return RedirectResponse("/settings/email-access?connected=outlook")
+    return RedirectResponse(f"{settings.frontend_base_url}/app/email-access?connected=outlook")
 
 
 @router.delete("/{account_id}")

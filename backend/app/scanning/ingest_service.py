@@ -15,6 +15,7 @@ rows are created, and nothing is flushed until the single commit at the end
 """
 
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 from sqlalchemy import select
@@ -26,7 +27,11 @@ from app.matching.matcher import summarize_candidate
 from app.models.db import Candidate, ResumeSource
 from app.models.schemas import ScanResult
 from app.scanning.folder_ingestor import content_hash
-from app.scanning.identity_resolution import build_resume_source, compute_fingerprint, merge_into_candidate
+from app.scanning.identity_resolution import (
+    build_resume_source,
+    compute_fingerprint,
+    merge_into_candidate,
+)
 from app.scanning.ingestor_base import ResumeIngestor
 from app.scanning.mirror_writer import write_mirror
 from app.scanning.parser import parse_resume
@@ -87,7 +92,18 @@ async def run_scan(
     date_start=None,
     date_end=None,
     max_concurrent_embeddings: int = 8,
+    checkpoint_every: int = 500,
+    on_progress: "Callable[[ScanResult], None] | None" = None,
 ) -> ScanResult:
+    """checkpoint_every / on_progress exist for real-mailbox-scale scans (see
+    project-log): the previous single-commit-at-the-end design meant a scan
+    that ran for tens of minutes lost *everything* if it failed near the
+    end — a persistent network blip late in an otherwise-successful run
+    would discard all of it. Committing (and flushing pending embeddings)
+    every `checkpoint_every` resumes makes partial progress durable at a
+    small throughput cost. on_progress is called after every resume (cheap,
+    in-memory only) so a background job can report live counts instead of
+    only a final result."""
     start_time = time.monotonic()
     resumes_found = 0
     created = 0
@@ -110,7 +126,19 @@ async def run_scan(
         session.execute(select(ResumeSource.content_hash, ResumeSource.source_ref)).all()
     )
 
-    for ingested in ingestor.scan(date_start=date_start, date_end=date_end):
+    async def _flush_checkpoint() -> None:
+        if pending_embeddings:
+            embeddings = await bounded_gather(
+                pending_embeddings,
+                lambda pair: llm.embed(embedding_model, pair[1]),
+                max_concurrent_embeddings,
+            )
+            for (candidate, _text), embedding in zip(pending_embeddings, embeddings):
+                candidate.embedding = embedding
+            pending_embeddings.clear()
+        session.commit()
+
+    async for ingested in ingestor.scan(date_start=date_start, date_end=date_end):
         resumes_found += 1
         try:
             file_hash = content_hash(ingested.file_bytes)
@@ -171,6 +199,7 @@ async def run_scan(
                 file_path=file_path,
                 date_submitted=ingested.date_submitted,
                 additional_attachments=ingested.additional_attachments,
+                email_link=ingested.email_link,
             )
             session.add(source)
             seen_sources.add((file_hash, ingested.source_ref))
@@ -181,17 +210,25 @@ async def run_scan(
                 updated += 1
         except Exception as exc:  # noqa: BLE001 - one bad resume shouldn't abort the whole scan
             errors.append(f"{ingested.filename}: {exc}")
+        finally:
+            # A `finally` (not code after the try/except) so this still runs
+            # on the "already seen this exact resume" `continue` path above,
+            # not just the fall-through/exception paths.
+            if on_progress:
+                on_progress(
+                    ScanResult(
+                        resumes_found=resumes_found,
+                        candidates_created=created,
+                        candidates_updated=updated,
+                        duplicates_skipped=skipped,
+                        errors=list(errors),
+                        elapsed_seconds=round(time.monotonic() - start_time, 2),
+                    )
+                )
+            if resumes_found % checkpoint_every == 0:
+                await _flush_checkpoint()
 
-    if pending_embeddings:
-        embeddings = await bounded_gather(
-            pending_embeddings,
-            lambda pair: llm.embed(embedding_model, pair[1]),
-            max_concurrent_embeddings,
-        )
-        for (candidate, _text), embedding in zip(pending_embeddings, embeddings):
-            candidate.embedding = embedding
-
-    session.commit()
+    await _flush_checkpoint()
     return ScanResult(
         resumes_found=resumes_found,
         candidates_created=created,

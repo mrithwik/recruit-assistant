@@ -20,6 +20,7 @@ token whenever the SDK says it's needed.
 """
 
 import json
+import os
 from datetime import datetime
 
 import keyring
@@ -30,7 +31,11 @@ from msal import ConfidentialClientApplication, SerializableTokenCache
 
 KEYCHAIN_SERVICE = "recruit-assistant-email"
 
-GOOGLE_SCOPES = ["https://www.googleapis.com/auth/gmail.readonly", "https://www.googleapis.com/auth/userinfo.email"]
+GOOGLE_SCOPES = [
+    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/gmail.insert",
+    "https://www.googleapis.com/auth/userinfo.email",
+]
 MS_SCOPES = ["Mail.Read"]
 
 
@@ -52,6 +57,19 @@ def delete_token(account_id: str) -> None:
 
 
 def build_google_flow(client_id: str, client_secret: str, redirect_uri: str) -> Flow:
+    # oauthlib refuses to parse a plain-http authorization response by
+    # default (InsecureTransportError). Google itself allows http://localhost
+    # redirect URIs for local/desktop testing, so relax the check only for
+    # that exact case — never for a real https deployment.
+    if redirect_uri.startswith("http://localhost") or redirect_uri.startswith("http://127.0.0.1"):
+        os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
+
+    # Google always adds the "openid" scope to the token response once
+    # userinfo.email is requested, even though we didn't ask for it
+    # explicitly. oauthlib treats any scope drift as a hard error unless
+    # told to relax — this is expected Google behavior, not a real mismatch.
+    os.environ["OAUTHLIB_RELAX_TOKEN_SCOPE"] = "1"
+
     client_config = {
         "web": {
             "client_id": client_id,
@@ -61,7 +79,18 @@ def build_google_flow(client_id: str, client_secret: str, redirect_uri: str) -> 
             "redirect_uris": [redirect_uri],
         }
     }
-    return Flow.from_client_config(client_config, scopes=GOOGLE_SCOPES, redirect_uri=redirect_uri)
+    # PKCE is auto-enabled by default, but the code_verifier it generates
+    # lives only on this Flow instance in memory — connect_google and
+    # callback_google each build a fresh Flow, so a verifier from the
+    # authorize step never reaches the token-exchange step (would need a
+    # server-side session to bridge them). This is a confidential client
+    # (has a client_secret), so PKCE isn't required; disable it instead.
+    return Flow.from_client_config(
+        client_config,
+        scopes=GOOGLE_SCOPES,
+        redirect_uri=redirect_uri,
+        autogenerate_code_verifier=False,
+    )
 
 
 def store_google_credentials(account_id: str, creds: GoogleCredentials) -> str:

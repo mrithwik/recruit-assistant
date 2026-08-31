@@ -1,8 +1,11 @@
-from collections.abc import Iterator
+from collections.abc import AsyncIterator
 from datetime import datetime
 
+import pytest
+
+from app.models.db import Candidate
 from app.models.enums import ResumeOrigin
-from app.models.schemas import IngestedResume
+from app.models.schemas import IngestedResume, ScanResult
 from app.scanning.ingest_service import run_scan
 from app.scanning.ingestor_base import ResumeIngestor
 
@@ -17,7 +20,7 @@ class _RepeatingFolderIngestor(ResumeIngestor):
     """Yields the same file twice, simulating a folder rescan that finds a file
     it already ingested last time."""
 
-    def scan(self, date_start=None, date_end=None) -> Iterator[IngestedResume]:
+    async def scan(self, date_start=None, date_end=None) -> AsyncIterator[IngestedResume]:
         for _ in range(2):
             yield IngestedResume(
                 origin=ResumeOrigin.FOLDER,
@@ -75,3 +78,77 @@ async def test_second_scan_run_also_skips_previously_seen_file(storage, mock_llm
     assert second.candidates_created == 0
     assert second.candidates_updated == 0
     assert second.duplicates_skipped == 2
+
+
+def _distinct_resume(i: int) -> bytes:
+    return (
+        f"Candidate Number{i}\ncandidate{i}@example.com\n"
+        f"{i + 1} years experience with Python and SQL.".encode()
+    )
+
+
+class _MultiDistinctIngestor(ResumeIngestor):
+    """Yields `count` genuinely different candidates — used to check
+    checkpointing/progress-callback behavior, which per-duplicate-resume
+    tests above can't exercise since every yielded item is the same person."""
+
+    def __init__(self, count: int, fail_at: int | None = None):
+        self.count = count
+        self.fail_at = fail_at
+
+    async def scan(self, date_start=None, date_end=None) -> AsyncIterator[IngestedResume]:
+        for i in range(self.count):
+            if self.fail_at is not None and i == self.fail_at:
+                raise RuntimeError("simulated mid-scan failure (e.g. network exhausted retries)")
+            yield IngestedResume(
+                origin=ResumeOrigin.FOLDER,
+                source_ref="/tmp/resumes",
+                file_bytes=_distinct_resume(i),
+                filename=f"candidate{i}.txt",
+                date_submitted=datetime(2026, 1, 1),
+            )
+
+
+async def test_on_progress_called_once_per_resume_with_cumulative_counts(storage, mock_llm, tmp_path):
+    progress_calls: list[ScanResult] = []
+    with storage.session() as session:
+        result = await run_scan(
+            ingestor=_MultiDistinctIngestor(count=5),
+            storage=storage,
+            session=session,
+            candidates_dir=tmp_path,
+            llm=mock_llm,
+            summary_model="",
+            on_progress=progress_calls.append,
+        )
+
+    assert len(progress_calls) == 5
+    assert [p.resumes_found for p in progress_calls] == [1, 2, 3, 4, 5]
+    assert progress_calls[-1].candidates_created == result.candidates_created == 5
+
+
+async def test_checkpoint_commits_survive_a_later_mid_scan_failure(storage, mock_llm, tmp_path):
+    """The whole point of checkpointing: a failure after resume 4 (e.g. the
+    ingestor's retries exhausted mid-scan) must not roll back resumes 1-2,
+    which a checkpoint_every=2 run should have already committed."""
+    with pytest.raises(RuntimeError, match="simulated mid-scan failure"):
+        with storage.session() as session:
+            await run_scan(
+                ingestor=_MultiDistinctIngestor(count=5, fail_at=4),
+                storage=storage,
+                session=session,
+                candidates_dir=tmp_path,
+                llm=mock_llm,
+                summary_model="",
+                checkpoint_every=2,
+            )
+
+    with storage.session() as session:
+        from sqlalchemy import select
+
+        candidates = session.execute(select(Candidate)).scalars().all()
+
+    # Resumes 0-3 were processed (index 4 is where it raised); checkpoints
+    # fire after resume counts 2 and 4, so all 4 already-processed
+    # candidates should be durably committed despite the run never finishing.
+    assert len(candidates) == 4

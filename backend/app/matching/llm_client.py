@@ -1,6 +1,6 @@
 """
 LLMClient — thin abstraction over OpenRouter (primary) with OpenAI as a direct
-fallback provider, plus a MockLLMClient for USE_MOCK=true / golden tests.
+fallback provider, plus a MockLLMClient for USE_MOCK_LLM=true / golden tests.
 
 Kept intentionally small: one method to get a chat completion, one to get a
 JSON object back (used by the resume parser and matcher), one for embeddings.
@@ -124,7 +124,7 @@ def _mock_extract_profile(prompt: str) -> dict:
     extraction prompt — not a real LLM, but reads the actual input instead of
     returning one canned profile for every resume. Matters at volume: a
     generated dataset of thousands of varied resumes should show up as
-    varied candidates even with USE_MOCK=true and no API key."""
+    varied candidates even with USE_MOCK_LLM=true and no API key."""
     marker = "Resume text:\n---\n"
     text = prompt.split(marker, 1)[1] if marker in prompt else prompt
 
@@ -229,7 +229,7 @@ def _mock_score_match(prompt: str) -> dict:
 
 
 class MockLLMClient(LLMClient):
-    """Deterministic canned responses — powers USE_MOCK=true and the golden
+    """Deterministic canned responses — powers USE_MOCK_LLM=true and the golden
     test harness, so the full pipeline is exercisable with zero API keys."""
 
     async def complete(self, model: str, prompt: str, system: str = "") -> str:
@@ -263,20 +263,51 @@ def _safe_json_loads(raw: str) -> dict:
     raw = raw.strip()
     if raw.startswith("```"):
         raw = raw.strip("`")
-        if raw.startswith("json"):
-            raw = raw[4:]
+        raw = raw.removeprefix("json")
     try:
         return json.loads(raw)
     except Exception:
         return {}
 
 
-def build_llm_client(use_mock: bool, openrouter_key: str, openai_key: str) -> LLMClient:
-    if use_mock:
-        return MockLLMClient()
+class DispatcherLLMClient(LLMClient):
+    """Wraps a MockLLMClient and (if API keys are configured) a real client,
+    routing every call to whichever one app.runtime_settings.get_use_mock_llm()
+    says to use *at call time* — this is what lets the UI toggle mock/real
+    without restarting the backend, instead of the choice being baked in
+    once at startup. Falls back to mock if real mode is requested but no
+    provider was ever configured, rather than raising mid-scan (routes/
+    mock_mode.py's PATCH endpoint is where that gets rejected up front)."""
+
+    def __init__(self, mock_client: LLMClient, real_client: LLMClient | None):
+        self.mock_client = mock_client
+        self.real_client = real_client
+
+    def _active(self) -> LLMClient:
+        from app.runtime_settings import get_use_mock_llm
+
+        if get_use_mock_llm() or self.real_client is None:
+            return self.mock_client
+        return self.real_client
+
+    async def complete(self, model: str, prompt: str, system: str = "") -> str:
+        return await self._active().complete(model, prompt, system)
+
+    async def embed(self, model: str, text: str) -> list[float]:
+        return await self._active().embed(model, text)
+
+
+def build_real_llm_client(openrouter_key: str, openai_key: str) -> LLMClient | None:
     fallback = OpenAIClient(openai_key) if openai_key else None
     if openrouter_key:
         return OpenRouterClient(openrouter_key, fallback=fallback)
-    if fallback:
-        return fallback
-    raise RuntimeError("No LLM provider configured — set OPENROUTER_API_KEY or OPENAI_API_KEY, or USE_MOCK=true")
+    return fallback
+
+
+def build_llm_client(openrouter_key: str, openai_key: str) -> LLMClient:
+    """Always returns a DispatcherLLMClient so mock/real can be toggled live
+    at runtime — see DispatcherLLMClient. Works even with no API keys
+    configured (real mode just stays unavailable until keys are added; the
+    PATCH /api/v1/settings/mock-mode route refuses to enable real LLM mode
+    in that case rather than letting it fail confusingly mid-scan)."""
+    return DispatcherLLMClient(mock_client=MockLLMClient(), real_client=build_real_llm_client(openrouter_key, openai_key))

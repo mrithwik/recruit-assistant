@@ -22,7 +22,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Session, sessionmaker
 
-from app.models.db import Base, Candidate, ResumeSource, SearchHistoryEntry, User
+from app.models.db import Base, Candidate, IngestScanHistoryEntry, ResumeSource, SearchHistoryEntry, User
 
 _SORT_COLUMNS = {
     "recent": (Candidate.date_submitted, True),
@@ -149,15 +149,23 @@ class LocalStorageBackend(BaseStorageBackend):
         sort: str,
         limit: int,
         offset: int,
+        skills: list[str] | None = None,
+        employment_statuses: list[str] | None = None,
+        work_visa_statuses: list[str] | None = None,
+        experience_min: float | None = None,
+        experience_max: float | None = None,
     ) -> tuple[list[Candidate], int]:
         """Filters + sorts + pages entirely in SQL instead of loading every
         matching candidate into Python and slicing there — the previous
         approach (`candidates_in_date_range`) returned the full result set on
         every call, which is what made All Candidates cost more the larger
         the database got, independent of how many rows the recruiter was
-        actually looking at. `source` and `query` filtering happen before
-        LIMIT/OFFSET so the page and its total count both reflect the same
-        filtered set."""
+        actually looking at. All filters happen before LIMIT/OFFSET so the
+        page and its total count both reflect the same filtered set, and
+        combine as AND (a candidate must match every active filter) while
+        each multi-select filter (skills/status/visa) is an OR internally —
+        e.g. skills=[Python, Go] + employment_statuses=[actively_looking]
+        means "(Python or Go) and actively_looking"."""
         conditions = []
         if start:
             conditions.append(Candidate.date_submitted >= start)
@@ -177,6 +185,22 @@ class LocalStorageBackend(BaseStorageBackend):
                     Candidate.skills.cast(String).ilike(like),
                 )
             )
+        if skills:
+            # skills is stored as a JSON list — matched via the same
+            # cast-to-string ilike approach the free-text search above
+            # already uses rather than a JSON1-specific operator, so this
+            # stays portable if candidates_page grows a non-SQLite backend.
+            conditions.append(
+                or_(*[Candidate.skills.cast(String).ilike(f'%"{skill}"%') for skill in skills])
+            )
+        if employment_statuses:
+            conditions.append(Candidate.employment_status.in_(employment_statuses))
+        if work_visa_statuses:
+            conditions.append(Candidate.work_visa_status.in_(work_visa_statuses))
+        if experience_min is not None:
+            conditions.append(Candidate.experience_years >= experience_min)
+        if experience_max is not None:
+            conditions.append(Candidate.experience_years <= experience_max)
 
         count_stmt = select(func.count()).select_from(Candidate)
         for condition in conditions:
@@ -191,7 +215,23 @@ class LocalStorageBackend(BaseStorageBackend):
 
         return list(session.execute(page_stmt).scalars()), total
 
+    def candidate_facets(self, session: Session) -> tuple[list[str], float]:
+        # Skills is a JSON list per row with no relational table behind it,
+        # so "distinct skills across the pool" has to be flattened in
+        # Python rather than a single SQL DISTINCT — fine at this scale
+        # (one skills-list per candidate, not per resume line).
+        skill_set: set[str] = set()
+        for (skills,) in session.execute(select(Candidate.skills)):
+            skill_set.update(skills or [])
+        max_experience = session.execute(select(func.max(Candidate.experience_years))).scalar_one() or 0.0
+        return sorted(skill_set, key=str.lower), max_experience
+
     def record_search_history(self, session: Session, entry: SearchHistoryEntry) -> SearchHistoryEntry:
+        session.add(entry)
+        session.flush()
+        return entry
+
+    def record_ingest_scan(self, session: Session, entry: IngestScanHistoryEntry) -> IngestScanHistoryEntry:
         session.add(entry)
         session.flush()
         return entry

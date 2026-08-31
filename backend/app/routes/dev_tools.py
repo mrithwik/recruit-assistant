@@ -14,8 +14,22 @@ from app.config import Settings
 from app.criteria.service import seed_builtin_criteria
 from app.dependencies import _seed_demo_mailbox, get_settings, get_storage
 from app.dev_tools.sample_data_generator import generate
-from app.models.db import Candidate, Criterion, EmailAccount, Job, JobCriterion, Match, ResumeSource, SearchHistoryEntry
-from app.models.schemas import ClearDataOut, GenerateSampleDataOut, GenerateSampleDataRequest
+from app.models.db import (
+    Candidate,
+    Criterion,
+    EmailAccount,
+    Job,
+    JobCriterion,
+    Match,
+    ResumeSource,
+    SearchHistoryEntry,
+)
+from app.models.schemas import (
+    ClearDataOut,
+    GenerateSampleDataOut,
+    GenerateSampleDataRequest,
+)
+from app.runtime_settings import get_use_mock_email
 from app.storage.base import BaseStorageBackend
 
 router = APIRouter(prefix="/api/v1/dev-tools", tags=["dev-tools"])
@@ -52,7 +66,7 @@ def generate_sample_data(
         followup_count=min(payload.followups, MAX_FOLLOWUPS),
         upskill_count=min(payload.upskill, MAX_UPSKILL),
     )
-    if settings.use_mock:
+    if get_use_mock_email():
         # Make the mock mailbox selectable immediately — don't make the
         # recruiter restart the backend just because this was the first
         # generate click and MOCK_EMAIL_FIXTURES_PATH wasn't set yet.

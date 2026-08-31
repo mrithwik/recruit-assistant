@@ -1,4 +1,4 @@
-from collections.abc import Iterator
+from collections.abc import AsyncIterator
 from datetime import datetime
 
 from app.models.enums import ResumeOrigin
@@ -20,7 +20,7 @@ class _TwoSubmissionIngestor(ResumeIngestor):
     """Same person, two submissions years apart with an upskilled resume —
     what a real long-lived candidate history looks like."""
 
-    def scan(self, date_start=None, date_end=None) -> Iterator[IngestedResume]:
+    async def scan(self, date_start=None, date_end=None) -> AsyncIterator[IngestedResume]:
         yield IngestedResume(
             origin=ResumeOrigin.FOLDER,
             source_ref="/tmp/resumes",
@@ -64,7 +64,7 @@ async def test_history_records_a_dated_entry_per_submission(storage, mock_llm, t
 
 async def test_history_stays_sorted_even_when_ingested_out_of_order(storage, mock_llm, tmp_path):
     class _ReversedOrderIngestor(ResumeIngestor):
-        def scan(self, date_start=None, date_end=None):
+        async def scan(self, date_start=None, date_end=None):
             # Later submission ingested FIRST — simulates a folder walk or
             # email scan that doesn't happen to visit items chronologically.
             yield IngestedResume(

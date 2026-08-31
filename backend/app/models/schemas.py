@@ -1,11 +1,24 @@
 """Pydantic API schemas — request/response contracts for the routes."""
 
-from datetime import datetime
+from datetime import UTC, datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.models.enums import EmploymentStatus, MatchTier, ResumeOrigin, WorkVisaStatus
 
+
+def _to_naive_utc(value: datetime | None) -> datetime | None:
+    """The frontend's date picker sends toISOString() (a "Z"-suffixed,
+    timezone-aware string) — Pydantic parses that as an aware datetime, but
+    every date_submitted elsewhere in the codebase is naive UTC
+    (datetime.utcnow()). Comparing an aware and a naive datetime raises
+    TypeError ("can't compare offset-naive and offset-aware datetimes") —
+    this is what actually failed a real scan (see project-log). Normalizing
+    once at the request boundary means no ingestor/comparison site downstream
+    needs to know timezones exist at all."""
+    if value is not None and value.tzinfo is not None:
+        return value.astimezone(UTC).replace(tzinfo=None)
+    return value
 
 # --- Auth ---
 
@@ -105,12 +118,28 @@ class CandidateOut(BaseModel):
     portfolio_url: str = ""
     sources: list[str] = Field(default_factory=list)  # origins this candidate was seen from
     history: list[dict] = Field(default_factory=list)  # dated timeline — see Candidate.history
+    # Deep link to the most recent source email with one on record — blank
+    # if every source is folder-origin, a mock fixture, or predates the
+    # email_link feature. See ResumeSource.email_link / email_ingestor.py.
+    email_link: str = ""
 
 
 class CandidateListOut(BaseModel):
     candidates: list[CandidateOut]
     total: int = 0
     elapsed_seconds: float = 0.0
+
+
+class CandidateFacetsOut(BaseModel):
+    """Options for the All Candidates filter bar — skills are the distinct
+    values actually present in the pool (so the picker never offers a skill
+    with zero matches); status/visa options are the fixed enums since every
+    value is always a legitimate filter choice even if unused today."""
+
+    skills: list[str] = Field(default_factory=list)
+    employment_statuses: list[str] = Field(default_factory=list)
+    work_visa_statuses: list[str] = Field(default_factory=list)
+    experience_years_max: float = 0.0
 
 
 class ResumeSourceOut(BaseModel):
@@ -122,6 +151,7 @@ class ResumeSourceOut(BaseModel):
     source_ref: str
     date_submitted: datetime
     additional_attachments: list[str] = Field(default_factory=list)
+    email_link: str = ""
 
 
 class CandidateDetailOut(CandidateOut):
@@ -129,7 +159,7 @@ class CandidateDetailOut(CandidateOut):
     candidate has across all jobs, so a recruiter can see their whole
     pipeline standing from one place."""
 
-    matches: list["MatchSummaryItem"] = Field(default_factory=list)
+    matches: list["CandidateMatchDetail"] = Field(default_factory=list)
 
 
 # --- Ingestion ---
@@ -151,6 +181,9 @@ class IngestedResume(BaseModel):
     # "resume" (which previously ran full LLM extraction on a cover letter
     # and could overwrite better fields from the actual resume).
     additional_attachments: list[str] = Field(default_factory=list)
+    # Deep link to the source email (Gmail/Outlook web UI) — blank for
+    # folder-origin resumes and mock fixtures. See email_ingestor.py.
+    email_link: str = ""
 
 
 class ScanFolderRequest(BaseModel):
@@ -159,11 +192,15 @@ class ScanFolderRequest(BaseModel):
     date_start: datetime | None = None
     date_end: datetime | None = None
 
+    _normalize_dates = field_validator("date_start", "date_end")(_to_naive_utc)
+
 
 class ScanEmailRequest(BaseModel):
     account_ids: list[str]
     date_start: datetime | None = None
     date_end: datetime | None = None
+
+    _normalize_dates = field_validator("date_start", "date_end")(_to_naive_utc)
 
 
 class ScanResult(BaseModel):
@@ -173,6 +210,32 @@ class ScanResult(BaseModel):
     duplicates_skipped: int = 0
     errors: list[str] = Field(default_factory=list)
     elapsed_seconds: float = 0.0
+
+
+class ScanJobOut(BaseModel):
+    """A scan now runs as a background job (see app/scanning/job_registry.py)
+    instead of blocking the triggering request — a real email scan can run
+    long enough that holding one HTTP request open for it is bad UX and
+    risks a browser/proxy timeout. POST /scan/folders and /scan/email-accounts
+    return this immediately with status="running"; poll GET /scan/jobs/{id}
+    for progress."""
+
+    id: str
+    status: str
+    started_at: datetime
+    completed_at: datetime | None = None
+    result: ScanResult | None = None
+    progress: ScanResult | None = None
+    error: str | None = None
+
+
+class MaintenanceTaskOut(BaseModel):
+    """One registered backfill/repair task — see app/maintenance/tasks.py."""
+
+    id: str
+    label: str
+    description: str
+    pending_count: int = 0
 
 
 # --- Matching ---
@@ -207,10 +270,11 @@ class MatchListOut(BaseModel):
 
 
 class MatchSummaryItem(BaseModel):
-    """One row in a lightweight match summary — used both on the candidate
-    detail page (matches across jobs) and the Jobs page (top candidates for
-    a job), so neither has to fetch full MatchOut payloads just to show a
-    name, score, and tier."""
+    """One row in a lightweight match summary — used on the Jobs page's
+    "top candidates for this job" widget, where only a name/score/tier is
+    shown and fetching full MatchOut payloads (reasons, flags, etc.) would
+    be wasted work. See CandidateMatchDetail for the richer version the
+    candidate detail page uses."""
 
     match_id: str
     job_id: str
@@ -220,6 +284,19 @@ class MatchSummaryItem(BaseModel):
     score: float
     tier: MatchTier
     matched_at: datetime
+
+
+class CandidateMatchDetail(MatchSummaryItem):
+    """CandidateDetailOut's per-match rows — adds the same red-flag/missing-
+    info/judge-notes detail the Match Results page shows, so the "Review"
+    link from the dashboard's Needs Attention list actually lands somewhere
+    that explains *why* this match needs a look, not just a bare tier badge
+    with no way to follow up."""
+
+    reasons: MatchReasons = Field(default_factory=MatchReasons)
+    missing_info: list[str] = Field(default_factory=list)
+    flags: list[dict] = Field(default_factory=list)
+    judge_notes: str = ""
 
 
 class JobMatchSummary(BaseModel):
@@ -300,6 +377,15 @@ class EmailAccountOut(BaseModel):
     status: str
 
 
+class OAuthStatusOut(BaseModel):
+    """Whether Google/Microsoft OAuth client credentials are set in .env —
+    backs the setup-instructions banner on the Email Access page for a
+    fresh deploy where nobody's connected an account yet."""
+
+    google_configured: bool
+    microsoft_configured: bool
+
+
 class ScheduledSourceIn(BaseModel):
     kind: str  # "folder" | "email_account"
     ref: str  # folder path, or EmailAccount.id
@@ -360,7 +446,7 @@ class AttentionItem(BaseModel):
 
 
 class ActivityItem(BaseModel):
-    type: str  # "scan" | "candidate"
+    type: str  # "scan" (a matching run) | "candidate" | "ingest" (a folder/email scan — see IngestScanHistoryEntry)
     timestamp: datetime
     description: str
     job_id: str = ""  # set when type == "scan" — links to that job's results/history
@@ -405,3 +491,17 @@ class GenerateSampleDataOut(BaseModel):
     upskill_journey_candidates: int
     resumes_dir: str
     manifest_path: str
+
+
+# --- Mock mode (runtime-toggleable, see app/runtime_settings.py) ---
+
+class MockModeOut(BaseModel):
+    use_mock_llm: bool
+    use_mock_email: bool
+    real_llm_available: bool  # whether an OpenRouter/OpenAI key is configured at all
+    expose_toggle: bool  # Settings.expose_mock_mode_toggle — UI hides the control if false
+
+
+class MockModeUpdateRequest(BaseModel):
+    use_mock_llm: bool | None = None
+    use_mock_email: bool | None = None

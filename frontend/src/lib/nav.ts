@@ -37,7 +37,7 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       { path: "/app/dashboard", label: "Dashboard", requirement: "1", icon: LayoutDashboard },
       { path: "/app/jobs", label: "Job Descriptions", requirement: "2.1", icon: Briefcase },
-      { path: "/app/results", label: "Candidate Results", requirement: "2.5", icon: Users },
+      { path: "/app/results", label: "Match Results", requirement: "2.5", icon: Users },
       { path: "/app/candidates", label: "All Candidates", requirement: "2.5", icon: IdCard },
       { path: "/app/history", label: "Search History", requirement: "2.7", icon: History },
     ],

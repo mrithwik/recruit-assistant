@@ -7,13 +7,16 @@ import {
   ChevronDown,
   ChevronsDownUp,
   ChevronsUpDown,
+  Play,
   Plus,
   Search,
   SlidersHorizontal,
+  Sparkles,
   Trash2,
   X,
 } from "lucide-react";
 import { useJobsStore } from "../stores/jobs-store";
+import { useMatchesStore } from "../stores/matches-store";
 import { useToastStore } from "../stores/toast-store";
 import { PageHeader } from "../components/ui/page-header";
 import { Card, CardDashed } from "../components/ui/card";
@@ -24,6 +27,7 @@ import { JobCriteriaPanel } from "../components/jobs/job-criteria-panel";
 import { JobScanMatchPanel } from "../components/jobs/job-scan-match-panel";
 import { JobResultsSummary } from "../components/jobs/job-results-summary";
 import { SortSelect } from "../components/ui/sort-select";
+import { ProgressBar } from "../components/ui/progress-bar";
 import type { Job } from "../lib/types";
 
 const PAGE_SIZE = 10;
@@ -66,6 +70,15 @@ export function JobsPage() {
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [companyFilters, setCompanyFilters] = useState<Set<string>>(new Set());
+  // Bulk "match selected"/"match all" — N independent matching runs (each
+  // already a fast, atomic backend call), looped from here rather than as
+  // one trackable background job. A refresh mid-run only loses the
+  // "remaining jobs in the queue" bookkeeping, not any already-completed
+  // job's results (those persisted server-side the moment each call
+  // returned) — a smaller gap than a scan losing all progress, so this
+  // doesn't need the job_registry survive-refresh treatment those get.
+  const [bulkMatching, setBulkMatching] = useState(false);
+  const [bulkProgress, setBulkProgress] = useState<{ done: number; total: number } | null>(null);
 
   useEffect(() => {
     fetchJobs().catch((e) => push(String(e), "error"));
@@ -164,6 +177,38 @@ export function JobsPage() {
     }
   }
 
+  function toggleSelectAll() {
+    setSelectedIds((prev) => (prev.size === filtered.length ? new Set() : new Set(filtered.map((j) => j.id))));
+  }
+
+  async function matchJobs(jobIds: string[]) {
+    if (jobIds.length === 0) return;
+    setBulkMatching(true);
+    setBulkProgress({ done: 0, total: jobIds.length });
+    const failures: string[] = [];
+    let totalMatched = 0;
+    try {
+      for (let i = 0; i < jobIds.length; i++) {
+        try {
+          const matches = await useMatchesStore.getState().runMatching(jobIds[i]);
+          totalMatched += matches?.length ?? 0;
+        } catch {
+          const job = jobs.find((j) => j.id === jobIds[i]);
+          failures.push(job?.title ?? jobIds[i]);
+        }
+        setBulkProgress({ done: i + 1, total: jobIds.length });
+      }
+      push(
+        `Matched ${jobIds.length - failures.length} job(s) — ${totalMatched} candidate match(es) total` +
+          (failures.length ? `. Failed: ${failures.join(", ")}` : ""),
+        failures.length ? "error" : "success",
+      );
+    } finally {
+      setBulkMatching(false);
+      setBulkProgress(null);
+    }
+  }
+
   return (
     <div className="mx-auto max-w-3xl">
       <PageHeader
@@ -209,10 +254,31 @@ export function JobsPage() {
             {expandedIds.size > 0 ? "Collapse all" : "Expand all"}
           </Button>
         )}
+        {filtered.length > 1 && (
+          <Button
+            variant="secondary"
+            size="md"
+            icon={<Sparkles size={14} />}
+            loading={bulkMatching}
+            onClick={() => matchJobs(filtered.map((j) => j.id))}
+            title="Runs matching against existing candidate data for every job currently shown"
+          >
+            Match all ({filtered.length})
+          </Button>
+        )}
         <Button icon={<Plus size={15} />} onClick={() => setAdding(true)}>
           Add job description
         </Button>
       </div>
+
+      {bulkMatching && bulkProgress && (
+        <div className="mb-4">
+          <ProgressBar
+            pct={Math.round((bulkProgress.done / bulkProgress.total) * 100)}
+            label={`Matching job ${bulkProgress.done} of ${bulkProgress.total}…`}
+          />
+        </div>
+      )}
 
       {showAdvanced && allCompanies.length > 0 && (
         <div className="mb-4 rounded-lg border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-900">
@@ -245,20 +311,43 @@ export function JobsPage() {
         </div>
       )}
 
-      {selectedIds.size > 0 && (
-        <div className="mb-3 flex items-center justify-between rounded-lg bg-indigo-50 px-3 py-2 text-sm dark:bg-indigo-500/10">
-          <span className="text-indigo-700 dark:text-indigo-300">{selectedIds.size} selected</span>
-          <div className="flex gap-2">
-            <button onClick={() => setSelectedIds(new Set())} className="text-zinc-500 hover:underline dark:text-zinc-400">
-              Clear
-            </button>
-            <button
-              onClick={deleteSelected}
-              className="flex items-center gap-1 font-medium text-red-600 hover:underline dark:text-red-400"
-            >
-              <Trash2 size={13} /> Delete selected
-            </button>
-          </div>
+      {filtered.length > 0 && (
+        <div className="mb-3 flex items-center gap-2 text-sm">
+          <label className="flex items-center gap-1.5 text-zinc-500 dark:text-zinc-400">
+            <input
+              type="checkbox"
+              checked={selectedIds.size > 0 && selectedIds.size === filtered.length}
+              ref={(el) => {
+                if (el) el.indeterminate = selectedIds.size > 0 && selectedIds.size < filtered.length;
+              }}
+              onChange={toggleSelectAll}
+              className="h-4 w-4 rounded border-zinc-300 text-indigo-600 focus:ring-indigo-500"
+            />
+            Select all
+          </label>
+          {selectedIds.size > 0 && (
+            <div className="flex flex-1 items-center justify-between rounded-lg bg-indigo-50 px-3 py-2 dark:bg-indigo-500/10">
+              <span className="text-indigo-700 dark:text-indigo-300">{selectedIds.size} selected</span>
+              <div className="flex gap-3">
+                <button
+                  onClick={() => matchJobs(Array.from(selectedIds))}
+                  disabled={bulkMatching}
+                  className="flex items-center gap-1 font-medium text-indigo-600 hover:underline disabled:cursor-not-allowed disabled:opacity-50 dark:text-indigo-400"
+                >
+                  <Play size={13} /> Match selected
+                </button>
+                <button onClick={() => setSelectedIds(new Set())} className="text-zinc-500 hover:underline dark:text-zinc-400">
+                  Clear
+                </button>
+                <button
+                  onClick={deleteSelected}
+                  className="flex items-center gap-1 font-medium text-red-600 hover:underline dark:text-red-400"
+                >
+                  <Trash2 size={13} /> Delete selected
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 

@@ -16,7 +16,8 @@ from app.config import Settings
 from app.logging import get_logger
 from app.matching.llm_client import LLMClient
 from app.models.db import EmailAccount, ScheduledSource
-from app.routes.scan import _resolve_mock_manifest_path, build_email_ingestor
+from app.routes.scan import build_email_ingestor, record_ingest_scan, resolve_mock_manifest_path
+from app.runtime_settings import get_use_mock_email
 from app.scanning.email_ingestor import load_fixtures_from_manifest
 from app.scanning.folder_ingestor import FolderIngestor
 from app.scanning.ingest_service import run_scan
@@ -42,13 +43,13 @@ async def _run_nightly_scan(storage: BaseStorageBackend, llm: LLMClient, setting
                     ingestor = FolderIngestor([source.ref], include_subfolders=source.include_subfolders)
                 else:
                     account = session.get(EmailAccount, source.ref)
-                    if not account and not settings.use_mock:
+                    if not account and not get_use_mock_email():
                         logger.warning("scheduled_source_account_missing", ref=source.ref)
                         continue
                     if mock_fixtures is None:
                         mock_fixtures = (
-                            load_fixtures_from_manifest(_resolve_mock_manifest_path(settings))
-                            if settings.use_mock
+                            load_fixtures_from_manifest(resolve_mock_manifest_path(settings))
+                            if get_use_mock_email()
                             else []
                         )
                     ingestor, error = build_email_ingestor(source.ref, account, settings, mock_fixtures)
@@ -67,6 +68,8 @@ async def _run_nightly_scan(storage: BaseStorageBackend, llm: LLMClient, setting
                     max_concurrent_embeddings=settings.max_concurrent_llm_calls,
                 )
                 source.last_run_at = datetime.utcnow()
+                origin = "email" if source.kind == "email_account" else "folder"
+                record_ingest_scan(storage, session, origin, f"auto-scan: {source.ref}", result)
                 session.commit()
                 logger.info(
                     "scheduled_scan_complete",

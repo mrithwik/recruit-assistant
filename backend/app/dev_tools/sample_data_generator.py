@@ -655,7 +655,7 @@ date-range picker on Scan Sources / Candidate Results / Search History all work 
 
 ## Use it via mock email scanning
 
-Set `MOCK_EMAIL_FIXTURES_PATH={manifest_path.resolve()}` in `.env` (with `USE_MOCK=true`),
+Set `MOCK_EMAIL_FIXTURES_PATH={manifest_path.resolve()}` in `.env` (with `USE_MOCK_EMAIL=true`),
 restart the backend. A demo mailbox is auto-seeded — go to Email Access, you'll see it
 connected, then scan it from Scan Sources like a real mailbox.
 
@@ -669,15 +669,15 @@ merging: `85%` of follow-ups reference a real prior application by the same emai
 - All follow-ups are intentionally sparse (that's what a real follow-up looks like)
 - Visa/employment status is "unknown" more often on thin/garbled items
 
-## Note on USE_MOCK=true
+## Note on USE_MOCK_LLM=true
 
-With `USE_MOCK=true`, `MockLLMClient` does a lightweight regex-based read of each resume
+With `USE_MOCK_LLM=true`, `MockLLMClient` does a lightweight regex-based read of each resume
 (name, email, phone, skills-by-keyword, "Work authorization:"/"Status:" lines, years of
 experience) rather than a fixed canned profile — so this dataset's variety actually shows
 up in the dashboard/results without needing a real LLM key. It's not as accurate as a real
 model (no semantic understanding), but it's real per-item extraction, not one identity
 repeated 2,000 times. Match *scores* are still a fixed placeholder in mock mode — set
-`USE_MOCK=false` with an OpenRouter/OpenAI key to see real, differentiated scoring.
+`USE_MOCK_LLM=false` with an OpenRouter/OpenAI key to see real, differentiated scoring.
 """,
         encoding="utf-8",
     )

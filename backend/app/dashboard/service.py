@@ -16,7 +16,7 @@ from datetime import datetime, timedelta
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.models.db import Candidate, EmailAccount, Job, Match, ResumeSource, SearchHistoryEntry
+from app.models.db import Candidate, EmailAccount, IngestScanHistoryEntry, Job, Match, ResumeSource, SearchHistoryEntry
 from app.models.enums import MatchTier
 from app.models.schemas import (
     ActivityItem,
@@ -158,38 +158,51 @@ def _needs_attention(session: Session) -> list[AttentionItem]:
 
 
 def _recent_activity(session: Session) -> list[ActivityItem]:
-    scans = session.execute(
+    matching_runs = session.execute(
         select(SearchHistoryEntry, Job.title)
         .join(Job, Job.id == SearchHistoryEntry.job_id)
         .order_by(SearchHistoryEntry.run_at.desc())
         .limit(RECENT_ACTIVITY_LIMIT)
     ).all()
-    scan_items = [
+    matching_items = [
         ActivityItem(
             type="scan",
             timestamp=entry.run_at,
             description=f"Matched {entry.candidate_count} candidate(s) against “{title}”",
             job_id=entry.job_id,
         )
-        for entry, title in scans
+        for entry, title in matching_runs
     ]
 
-    candidates = session.execute(
-        select(Candidate).order_by(Candidate.created_at.desc()).limit(RECENT_ACTIVITY_LIMIT)
+    # One row per completed ingest scan (folder or email) — e.g. "Scanned
+    # Gmail (name@example.com) — 623 found, 607 new, 16 updated". Replaces
+    # what used to be up to 10 near-identical "Added <candidate>" rows from
+    # a single scan burying the actual summary — a scan that adds hundreds
+    # of candidates at once used to make the whole feed just that one scan
+    # repeated, with no indication a scan was even what happened.
+    ingest_scans = session.execute(
+        select(IngestScanHistoryEntry).order_by(IngestScanHistoryEntry.ran_at.desc()).limit(RECENT_ACTIVITY_LIMIT)
     ).scalars().all()
-    candidate_items = []
-    for c in candidates:
-        full_name = f"{c.legal_first_name} {c.legal_last_name}".strip()
-        candidate_items.append(
-            ActivityItem(
-                type="candidate",
-                timestamp=c.created_at,
-                description=f"Added {full_name}" if full_name else "Added a new candidate",
-                candidate_id=c.id,
-            )
-        )
+    ingest_items = []
+    for entry in ingest_scans:
+        parts = [f"{entry.candidates_created} new"]
+        if entry.candidates_updated:
+            parts.append(f"{entry.candidates_updated} updated")
+        if entry.duplicates_skipped:
+            parts.append(f"{entry.duplicates_skipped} already seen")
+        if entry.error_count:
+            parts.append(f"{entry.error_count} error(s)")
 
-    merged = sorted(scan_items + candidate_items, key=lambda i: i.timestamp, reverse=True)
+        if entry.origin == "maintenance":
+            description = f"Ran “{entry.source_label}” — {entry.resumes_found} checked, {', '.join(parts)}"
+        else:
+            source_kind = "email" if entry.origin == "email" else "folder"
+            label = f" ({entry.source_label})" if entry.source_label else ""
+            description = f"Scanned {source_kind}{label} — {entry.resumes_found} found, {', '.join(parts)}"
+
+        ingest_items.append(ActivityItem(type="ingest", timestamp=entry.ran_at, description=description))
+
+    merged = sorted(matching_items + ingest_items, key=lambda i: i.timestamp, reverse=True)
     return merged[:RECENT_ACTIVITY_LIMIT]
 
 

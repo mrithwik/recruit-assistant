@@ -15,17 +15,17 @@ from app.matching.llm_client import LLMClient
 from app.matching.matcher import match_job_against_pool, score_to_tier
 from app.models.db import Candidate, Job, Match, SearchHistoryEntry
 from app.models.schemas import FlagIn, JobMatchSummary, MatchListOut, MatchOut, MatchReasons, MatchSummaryItem
-from app.routes.candidates import _batch_origins, _to_out
+from app.routes.candidates import _batch_email_links, _batch_origins, _to_out
 from app.storage.base import BaseStorageBackend
 
 router = APIRouter(prefix="/api/v1/matches", tags=["matches"])
 
 
-def _match_to_out(match: Match, candidate: Candidate, origins: list[str]) -> MatchOut:
+def _match_to_out(match: Match, candidate: Candidate, origins: list[str], email_link: str = "") -> MatchOut:
     return MatchOut(
         id=match.id,
         job_id=match.job_id,
-        candidate=_to_out(candidate, origins),
+        candidate=_to_out(candidate, origins, email_link),
         score=match.score,
         tier=match.tier,
         reasons=MatchReasons(**match.reasons) if match.reasons else MatchReasons(),
@@ -105,7 +105,9 @@ async def run_matching(
         )
 
         candidates_by_id = {c.id: c for c in candidates}
-        origins_by_candidate = _batch_origins(session, [r["candidate_id"] for r in results[:top_n]])
+        matched_ids = [r["candidate_id"] for r in results[:top_n]]
+        origins_by_candidate = _batch_origins(session, matched_ids)
+        email_links_by_candidate = _batch_email_links(session, matched_ids)
 
         out = []
         for r in results[:top_n]:
@@ -125,7 +127,11 @@ async def run_matching(
             )
             session.add(match)
             candidate = candidates_by_id[r["candidate_id"]]
-            out.append(_match_to_out(match, candidate, origins_by_candidate.get(candidate.id, [])))
+            out.append(
+                _match_to_out(
+                    match, candidate, origins_by_candidate.get(candidate.id, []), email_links_by_candidate.get(candidate.id, "")
+                )
+            )
 
         storage.record_search_history(
             session,
@@ -208,8 +214,14 @@ def list_matches(
             c.id: c for c in session.execute(select(Candidate).where(Candidate.id.in_(candidate_ids))).scalars()
         }
         origins_by_candidate = _batch_origins(session, candidate_ids)
+        email_links_by_candidate = _batch_email_links(session, candidate_ids)
         out = [
-            _match_to_out(m, candidates_by_id[m.candidate_id], origins_by_candidate.get(m.candidate_id, []))
+            _match_to_out(
+                m,
+                candidates_by_id[m.candidate_id],
+                origins_by_candidate.get(m.candidate_id, []),
+                email_links_by_candidate.get(m.candidate_id, ""),
+            )
             for m in matches
             if m.candidate_id in candidates_by_id
         ]
@@ -230,7 +242,8 @@ def add_flag(match_id: str, flag: FlagIn, storage: BaseStorageBackend = Depends(
         session.commit()
         candidate = session.get(Candidate, match.candidate_id)
         origins = _batch_origins(session, [candidate.id]).get(candidate.id, [])
-        return _match_to_out(match, candidate, origins)
+        email_link = _batch_email_links(session, [candidate.id]).get(candidate.id, "")
+        return _match_to_out(match, candidate, origins, email_link)
 
 
 def _profile_from_candidate(c: Candidate):

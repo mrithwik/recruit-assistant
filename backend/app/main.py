@@ -11,6 +11,7 @@ from app.dependencies import get_settings, init_dependencies
 from app.logging import configure_logging, get_logger
 from app.routes import (
     auth,
+    candidate_rescan,
     candidates,
     criteria,
     dashboard,
@@ -20,7 +21,10 @@ from app.routes import (
     health,
     history,
     jobs,
+    maintenance,
+    match_rescan,
     matches,
+    mock_mode,
     scan,
     scheduled_sources,
 )
@@ -35,7 +39,12 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
     configure_logging(settings.log_level)
     init_dependencies(settings)
-    logger.info("startup", use_mock=settings.use_mock, data_dir=str(settings.data_dir_path))
+    logger.info(
+        "startup",
+        use_mock_llm=settings.use_mock_llm,
+        use_mock_email=settings.use_mock_email,
+        data_dir=str(settings.data_dir_path),
+    )
 
     scheduler = None
     if settings.scheduler_enabled:
@@ -72,10 +81,14 @@ app.include_router(dashboard.router, dependencies=protected)
 app.include_router(jobs.router, dependencies=protected)
 app.include_router(scan.router, dependencies=protected)
 app.include_router(candidates.router, dependencies=protected)
+app.include_router(candidate_rescan.router, dependencies=protected)
 app.include_router(matches.router, dependencies=protected)
+app.include_router(match_rescan.router, dependencies=protected)
 app.include_router(criteria.router, dependencies=protected)
 app.include_router(history.router, dependencies=protected)
 app.include_router(draft_email.router, dependencies=protected)
 app.include_router(dev_tools.router, dependencies=protected)
+app.include_router(mock_mode.router, dependencies=protected)
 app.include_router(scheduled_sources.router, dependencies=protected)
+app.include_router(maintenance.router, dependencies=protected)
 app.include_router(email_accounts.router)

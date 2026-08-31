@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Mail, ShieldCheck, Unplug } from "lucide-react";
 import { useScanStore } from "../stores/scan-store";
 import { api } from "../lib/api";
@@ -6,13 +6,17 @@ import { useToastStore } from "../stores/toast-store";
 import { PageHeader } from "../components/ui/page-header";
 import { Card } from "../components/ui/card";
 import { EmptyState } from "../components/ui/empty-state";
+import { OAuthSetupGuide } from "../components/scan/oauth-setup-guide";
+import type { OAuthStatus } from "../lib/types";
 
 export function EmailAccessPage() {
   const { emailAccounts, fetchEmailAccounts } = useScanStore();
   const push = useToastStore((s) => s.push);
+  const [oauthStatus, setOauthStatus] = useState<OAuthStatus | null>(null);
 
   useEffect(() => {
     fetchEmailAccounts().catch(() => {});
+    api.getOAuthStatus().then(setOauthStatus).catch(() => {});
   }, []);
 
   async function disconnect(id: string) {
@@ -29,6 +33,10 @@ export function EmailAccessPage() {
     <div className="mx-auto max-w-2xl">
       <PageHeader title="Email Access" description="Connect a mailbox to scan for resume attachments." />
 
+      {oauthStatus && (
+        <OAuthSetupGuide googleConfigured={oauthStatus.google_configured} microsoftConfigured={oauthStatus.microsoft_configured} />
+      )}
+
       <Card className="mb-6 flex items-start gap-3 border-indigo-100 bg-indigo-50/50 dark:border-indigo-900 dark:bg-indigo-500/5">
         <ShieldCheck size={18} className="mt-0.5 shrink-0 text-indigo-600 dark:text-indigo-400" />
         <p className="text-sm text-zinc-600 dark:text-zinc-300">
@@ -39,18 +47,36 @@ export function EmailAccessPage() {
       </Card>
 
       <div className="mb-6 flex gap-3">
-        <a
-          href="/api/v1/email-accounts/connect/google"
-          className="flex items-center gap-2 rounded-lg border border-zinc-200 bg-white px-4 py-2 text-sm font-medium text-zinc-700 shadow-sm hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
-        >
-          <Mail size={15} /> Connect Gmail
-        </a>
-        <a
-          href="/api/v1/email-accounts/connect/microsoft"
-          className="flex items-center gap-2 rounded-lg border border-zinc-200 bg-white px-4 py-2 text-sm font-medium text-zinc-700 shadow-sm hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
-        >
-          <Mail size={15} /> Connect Outlook
-        </a>
+        {oauthStatus?.google_configured === false ? (
+          <span
+            title="Follow the Gmail setup steps above first"
+            className="flex cursor-not-allowed items-center gap-2 rounded-lg border border-zinc-200 bg-zinc-50 px-4 py-2 text-sm font-medium text-zinc-400 dark:border-zinc-800 dark:bg-zinc-900/50 dark:text-zinc-600"
+          >
+            <Mail size={15} /> Connect Gmail
+          </span>
+        ) : (
+          <a
+            href="/api/v1/email-accounts/connect/google"
+            className="flex items-center gap-2 rounded-lg border border-zinc-200 bg-white px-4 py-2 text-sm font-medium text-zinc-700 shadow-sm hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
+          >
+            <Mail size={15} /> Connect Gmail
+          </a>
+        )}
+        {oauthStatus?.microsoft_configured === false ? (
+          <span
+            title="Follow the Outlook setup steps above first"
+            className="flex cursor-not-allowed items-center gap-2 rounded-lg border border-zinc-200 bg-zinc-50 px-4 py-2 text-sm font-medium text-zinc-400 dark:border-zinc-800 dark:bg-zinc-900/50 dark:text-zinc-600"
+          >
+            <Mail size={15} /> Connect Outlook
+          </span>
+        ) : (
+          <a
+            href="/api/v1/email-accounts/connect/microsoft"
+            className="flex items-center gap-2 rounded-lg border border-zinc-200 bg-white px-4 py-2 text-sm font-medium text-zinc-700 shadow-sm hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
+          >
+            <Mail size={15} /> Connect Outlook
+          </a>
+        )}
       </div>
 
       {emailAccounts.length === 0 ? (

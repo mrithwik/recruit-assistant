@@ -6,9 +6,11 @@ services:
     environment:
       # Defaults to mock mode so this works with zero API keys out of the
       # box — same default as .env.example. Override with a real
-      # OPENROUTER_API_KEY/OPENAI_API_KEY (and USE_MOCK=false) for real
-      # LLM scoring; see architecture/getting-started.md.
-      - USE_MOCK=${USE_MOCK:-true}
+      # OPENROUTER_API_KEY/OPENAI_API_KEY (and USE_MOCK_LLM=false) for real
+      # LLM scoring; see architecture/getting-started.md. Also
+      # live-toggleable from the UI without restarting the container.
+      - USE_MOCK_LLM=${USE_MOCK_LLM:-true}
+      - USE_MOCK_EMAIL=${USE_MOCK_EMAIL:-true}
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - DATA_DIR=/app/backend/data

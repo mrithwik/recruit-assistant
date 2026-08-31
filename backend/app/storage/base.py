@@ -10,7 +10,7 @@ from datetime import datetime
 
 from sqlalchemy.orm import Session
 
-from app.models.db import Candidate, EmailAccount, Job, Match, ResumeSource, SearchHistoryEntry, User
+from app.models.db import Candidate, EmailAccount, IngestScanHistoryEntry, Job, Match, ResumeSource, SearchHistoryEntry, User
 
 
 class BaseStorageBackend(ABC):
@@ -42,10 +42,25 @@ class BaseStorageBackend(ABC):
         sort: str,
         limit: int,
         offset: int,
+        skills: list[str] | None = None,
+        employment_statuses: list[str] | None = None,
+        work_visa_statuses: list[str] | None = None,
+        experience_min: float | None = None,
+        experience_max: float | None = None,
     ) -> tuple[list[Candidate], int]: ...
 
     @abstractmethod
+    def candidate_facets(self, session: Session) -> tuple[list[str], float]:
+        """Distinct skills actually present in the pool, plus the current
+        max experience_years — backs the All Candidates filter bar's
+        options (see routes/candidates.py's /facets)."""
+        ...
+
+    @abstractmethod
     def record_search_history(self, session: Session, entry: SearchHistoryEntry) -> SearchHistoryEntry: ...
+
+    @abstractmethod
+    def record_ingest_scan(self, session: Session, entry: IngestScanHistoryEntry) -> IngestScanHistoryEntry: ...
 
     @abstractmethod
     def any_user_exists(self, session: Session) -> bool: ...

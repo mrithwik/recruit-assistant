@@ -119,6 +119,9 @@ class ResumeSource(Base):
     # letter, portfolio, etc.) that weren't ingested as their own resume —
     # see IngestedResume.additional_attachments.
     additional_attachments: Mapped[list] = mapped_column(JSON, default=list)
+    # Deep link to the source email — blank for folder-origin resumes and
+    # mock fixtures. See email_ingestor.py.
+    email_link: Mapped[str] = mapped_column(String, default="")
 
     candidate: Mapped["Candidate"] = relationship(back_populates="sources")
 
@@ -187,6 +190,27 @@ class SearchHistoryEntry(Base):
     sources_scanned: Mapped[dict] = mapped_column(JSON, default=dict)  # {folders: [...], mailboxes: [...]}
     candidate_count: Mapped[int] = mapped_column(default=0)
     criteria_version: Mapped[int] = mapped_column(default=1)
+
+
+class IngestScanHistoryEntry(Base):
+    """One row per completed ingest scan (folder or email) — separate from
+    SearchHistoryEntry, which logs *matching* runs against a job. Without
+    this, the dashboard's Recent Activity had no scan-level record at all:
+    it only had individual "Added <candidate>" rows, so a single 600-resume
+    scan buried the actual summary under 10 near-identical candidate lines
+    (see dashboard/service.py's _recent_activity)."""
+
+    __tablename__ = "ingest_scan_history"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    origin: Mapped[str] = mapped_column(String)  # "email" | "folder" | "maintenance" (see routes/maintenance.py)
+    source_label: Mapped[str] = mapped_column(String, default="")  # account email(s)/folder path(s), or task label
+    resumes_found: Mapped[int] = mapped_column(default=0)
+    candidates_created: Mapped[int] = mapped_column(default=0)
+    candidates_updated: Mapped[int] = mapped_column(default=0)
+    duplicates_skipped: Mapped[int] = mapped_column(default=0)
+    error_count: Mapped[int] = mapped_column(default=0)
+    ran_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
 
 class EmailAccount(Base):

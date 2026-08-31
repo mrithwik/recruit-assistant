@@ -19,12 +19,26 @@ class Settings(BaseSettings):
     # Mock mode bypasses external LLM + email API calls entirely, using
     # MockLLMClient / MockEmailIngestor fixtures — lets the whole app run
     # offline with zero API keys, which is also what CI/golden tests use.
-    use_mock: bool = True
+    # Split into two independent flags (previously one USE_MOCK covering
+    # both) — a real-Gmail scan needs use_mock_email=false, but that
+    # shouldn't force every resume's parsing/summarization/embedding onto a
+    # real, paid LLM call too. These are just the startup defaults; both are
+    # live-toggleable at runtime without a restart — see app/runtime_settings.py
+    # and routes/mock_mode.py.
+    use_mock_llm: bool = True
+    use_mock_email: bool = True
+
+    # Whether the mock/real toggle is exposed in the UI at all (Scan
+    # Sources page) — default on since this is a single-user local tool, but
+    # gives anyone who hands this app to someone else a way to hide a
+    # control that can incur real API cost.
+    expose_mock_mode_toggle: bool = True
 
     # Points MockEmailIngestor at a generated dataset (see
     # scripts/generate_sample_data.py) so "Scan email" is testable at volume
-    # with zero OAuth setup. Ignored unless use_mock is true. A demo mailbox
-    # is auto-seeded in EmailAccount when this is set (see main.py lifespan).
+    # with zero OAuth setup. Ignored unless use_mock_email is true. A demo
+    # mailbox is auto-seeded in EmailAccount when this is set (see main.py
+    # lifespan).
     mock_email_fixtures_path: str = ""
 
     # LLM (OpenRouter primary, OpenAI fallback)
@@ -40,6 +54,13 @@ class Settings(BaseSettings):
     # speed things up, low enough not to trip provider rate limits.
     max_concurrent_llm_calls: int = 8
 
+    # Caps in-flight Gmail/Outlook API calls during an email scan — same
+    # bounded-concurrency pattern as max_concurrent_llm_calls above. Found
+    # via load testing (see project-log): Gmail's per-user rate limit starts
+    # rejecting requests with 429s somewhere around 25 concurrent, so this
+    # stays comfortably under that with retry/backoff handling the rest.
+    max_concurrent_email_fetches: int = 15
+
     # Email OAuth
     google_oauth_client_id: str = ""
     google_oauth_client_secret: str = ""
@@ -47,6 +68,7 @@ class Settings(BaseSettings):
     ms_oauth_client_secret: str = ""
     ms_oauth_tenant_id: str = "common"
     oauth_redirect_base_url: str = "http://localhost:8000"
+    frontend_base_url: str = "http://localhost:5173"
 
     # Storage
     data_dir: str = "./data"

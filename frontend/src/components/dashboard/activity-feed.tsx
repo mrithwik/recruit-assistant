@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { ScanSearch, UserPlus } from "lucide-react";
+import { Inbox, ScanSearch, UserPlus } from "lucide-react";
 import type { ActivityItem } from "../../lib/types";
 import { EmptyState } from "../ui/empty-state";
 
@@ -17,6 +17,7 @@ function timeAgo(iso: string): string {
 function targetFor(item: ActivityItem): string | null {
   if (item.type === "scan" && item.job_id) return `/app/history?job=${item.job_id}`;
   if (item.type === "candidate" && item.candidate_id) return `/app/candidates/${item.candidate_id}`;
+  if (item.type === "ingest") return "/app/candidates";
   return null;
 }
 
@@ -41,10 +42,12 @@ export function ActivityFeed({ items }: { items: ActivityItem[] }) {
               className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full ${
                 item.type === "scan"
                   ? "bg-indigo-50 text-indigo-600 dark:bg-indigo-500/10 dark:text-indigo-400"
-                  : "bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-400"
+                  : item.type === "ingest"
+                    ? "bg-amber-50 text-amber-600 dark:bg-amber-500/10 dark:text-amber-400"
+                    : "bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-400"
               }`}
             >
-              {item.type === "scan" ? <ScanSearch size={12} /> : <UserPlus size={12} />}
+              {item.type === "scan" ? <ScanSearch size={12} /> : item.type === "ingest" ? <Inbox size={12} /> : <UserPlus size={12} />}
             </div>
             <div className="min-w-0 flex-1">
               <p className={`text-zinc-700 dark:text-zinc-300 ${target ? "group-hover:text-indigo-600 dark:group-hover:text-indigo-400" : ""}`}>

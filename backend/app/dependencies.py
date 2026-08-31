@@ -6,6 +6,7 @@ from functools import lru_cache
 
 from app.config import Settings
 from app.matching.llm_client import LLMClient, build_llm_client
+from app.runtime_settings import init_runtime_settings
 from app.storage.base import BaseStorageBackend
 from app.storage.local import LocalStorageBackend
 
@@ -23,11 +24,11 @@ def init_dependencies(settings: Settings) -> None:
     global _storage, _llm_client
     _storage = LocalStorageBackend(settings.sqlite_path)
     _llm_client = build_llm_client(
-        use_mock=settings.use_mock,
         openrouter_key=settings.openrouter_api_key,
         openai_key=settings.openai_api_key,
     )
-    if settings.use_mock and settings.mock_email_fixtures_path:
+    init_runtime_settings(settings.use_mock_llm, settings.use_mock_email)
+    if settings.use_mock_email and settings.mock_email_fixtures_path:
         _seed_demo_mailbox(_storage)
 
 

@@ -9,7 +9,8 @@ jobs:
   backend:
     runs-on: ubuntu-latest
     env:
-      USE_MOCK: "true"
+      USE_MOCK_LLM: "true"
+      USE_MOCK_EMAIL: "true"
     steps:
       - uses: actions/checkout@v4
 

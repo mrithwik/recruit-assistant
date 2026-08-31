@@ -5,7 +5,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.dashboard.service import build_dashboard_summary
-from app.models.db import Candidate, Job, Match, ResumeSource
+from app.models.db import Candidate, IngestScanHistoryEntry, Job, Match, ResumeSource
 
 
 def _seed(storage) -> str:
@@ -184,20 +184,33 @@ def test_needs_attention_kpi_counts_each_match_once(storage):
     assert summary.red_flagged_count == 2
 
 
-def test_recent_activity_describes_nameless_candidates_without_bare_added(storage):
-    # A candidate with a blank name (thin/garbled resume) must not produce
-    # the string "Added" with no name — f"Added {a} {b}".strip() only
-    # strips the OUTSIDE of the string, so "Added  ".strip() -> "Added"
-    # (still truthy) is the bug this guards against.
+def test_recent_activity_shows_one_ingest_scan_summary_not_per_candidate_rows(storage):
+    # A single scan can add hundreds of candidates at once — recent_activity
+    # must surface one summary row for the scan (see IngestScanHistoryEntry),
+    # not one row per candidate it created, which used to bury the actual
+    # "what happened" summary under a wall of near-identical "Added X" rows.
     with storage.session() as session:
+        for i in range(20):
+            session.add(
+                Candidate(
+                    id=str(uuid.uuid4()),
+                    identity_fingerprint=f"email:bulk{i}@example.com",
+                    legal_first_name=f"Person{i}",
+                    legal_last_name="Test",
+                    email=f"bulk{i}@example.com",
+                    date_submitted=datetime.utcnow(),
+                )
+            )
         session.add(
-            Candidate(
+            IngestScanHistoryEntry(
                 id=str(uuid.uuid4()),
-                identity_fingerprint="email:nameless@example.com",
-                legal_first_name="",
-                legal_last_name="",
-                email="nameless@example.com",
-                date_submitted=datetime.utcnow(),
+                origin="email",
+                source_label="me@example.com",
+                resumes_found=22,
+                candidates_created=20,
+                candidates_updated=1,
+                duplicates_skipped=1,
+                error_count=0,
             )
         )
         session.commit()
@@ -205,9 +218,58 @@ def test_recent_activity_describes_nameless_candidates_without_bare_added(storag
     with storage.session() as session:
         summary = build_dashboard_summary(session)
 
-    descriptions = [a.description for a in summary.recent_activity]
-    assert "Added" not in descriptions
-    assert "Added a new candidate" in descriptions
+    ingest_items = [a for a in summary.recent_activity if a.type == "ingest"]
+    assert len(ingest_items) == 1
+    assert ingest_items[0].description == "Scanned email (me@example.com) — 22 found, 20 new, 1 updated, 1 already seen"
+    assert not any(a.type == "candidate" for a in summary.recent_activity)
+
+
+def test_recent_activity_ingest_summary_reports_errors(storage):
+    with storage.session() as session:
+        session.add(
+            IngestScanHistoryEntry(
+                id=str(uuid.uuid4()),
+                origin="folder",
+                source_label="/resumes/2024",
+                resumes_found=5,
+                candidates_created=3,
+                candidates_updated=0,
+                duplicates_skipped=0,
+                error_count=2,
+            )
+        )
+        session.commit()
+
+    with storage.session() as session:
+        summary = build_dashboard_summary(session)
+
+    ingest_items = [a for a in summary.recent_activity if a.type == "ingest"]
+    assert len(ingest_items) == 1
+    assert "2 error(s)" in ingest_items[0].description
+
+
+def test_recent_activity_describes_maintenance_task_runs(storage):
+    with storage.session() as session:
+        session.add(
+            IngestScanHistoryEntry(
+                id=str(uuid.uuid4()),
+                origin="maintenance",
+                source_label="Backfill email links",
+                resumes_found=607,
+                candidates_created=590,
+                candidates_updated=0,
+                duplicates_skipped=17,
+                error_count=0,
+            )
+        )
+        session.commit()
+
+    with storage.session() as session:
+        summary = build_dashboard_summary(session)
+
+    ingest_items = [a for a in summary.recent_activity if a.type == "ingest"]
+    assert len(ingest_items) == 1
+    assert ingest_items[0].description == "Ran “Backfill email links” — 607 checked, 590 new, 17 already seen"
 
 
 def test_dashboard_summary_empty_state_has_no_errors(storage):
@@ -223,7 +285,8 @@ def test_dashboard_summary_empty_state_has_no_errors(storage):
 def client(tmp_path, monkeypatch):
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     monkeypatch.setenv("SQLITE_PATH", str(tmp_path / "test.db"))
-    monkeypatch.setenv("USE_MOCK", "true")
+    monkeypatch.setenv("USE_MOCK_LLM", "true")
+    monkeypatch.setenv("USE_MOCK_EMAIL", "true")
 
     from app.dependencies import get_settings
 

@@ -8,10 +8,12 @@ import { Card } from "../components/ui/card";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { InfoTooltip } from "../components/ui/info-tooltip";
+import { Toggle } from "../components/ui/toggle";
 import { ProgressBar, useSimulatedProgress } from "../components/ui/progress-bar";
 import { TimingBadge } from "../components/ui/timing-badge";
 import { SampleDataGenerator } from "../components/scan/sample-data-generator";
 import { DangerZone } from "../components/scan/danger-zone";
+import { MaintenanceTasks } from "../components/scan/maintenance-tasks";
 
 // Redesigned per feedback that the page read as one undifferentiated block —
 // this lays it out as three explicit numbered steps (pick a source, set a
@@ -32,6 +34,9 @@ export function ScanPage() {
     setFolderPaths,
     includeSubfolders,
     setIncludeSubfolders,
+    dateStart,
+    dateEnd,
+    dateRangeLabel,
     setDateRange,
     emailAccounts,
     selectedAccountIds,
@@ -39,12 +44,18 @@ export function ScanPage() {
     fetchEmailAccounts,
     scanFolders,
     scanEmail,
+    resumeActiveScanIfAny,
     lastResult,
     scanning,
+    scanProgress,
     lastGenerated,
     scheduledSources,
     fetchScheduledSources,
     setSourceAutoScan,
+    mockMode,
+    fetchMockMode,
+    setUseMockLlm,
+    setUseMockEmail,
   } = useScanStore();
   const push = useToastStore((s) => s.push);
   const [folderInput, setFolderInput] = useState("");
@@ -62,7 +73,28 @@ export function ScanPage() {
   useEffect(() => {
     fetchEmailAccounts().catch(() => {});
     fetchScheduledSources().catch(() => {});
+    fetchMockMode().catch(() => {});
+    // Reattach to a scan that was already running before a refresh (or in
+    // another tab) instead of silently losing visibility into it — see
+    // scan-store.ts's resumeActiveScanIfAny.
+    resumeActiveScanIfAny().catch(() => {});
   }, []);
+
+  async function toggleMockLlm(next: boolean) {
+    try {
+      await setUseMockLlm(next);
+    } catch (e) {
+      push(String(e), "error");
+    }
+  }
+
+  async function toggleMockEmail(next: boolean) {
+    try {
+      await setUseMockEmail(next);
+    } catch (e) {
+      push(String(e), "error");
+    }
+  }
 
   function addFolder() {
     if (!folderInput.trim()) return;
@@ -94,6 +126,53 @@ export function ScanPage() {
         title="Scan Sources"
         description="Three steps: pick where to look, set a date range, then scan. Local folders and connected mailboxes both work — alone or together."
       />
+
+      {mockMode?.expose_toggle && (
+        <Card className="mb-6 border-amber-200 bg-amber-50/40 dark:border-amber-900 dark:bg-amber-500/5">
+          <h2 className="mb-3 text-sm font-semibold text-zinc-700 dark:text-zinc-200">Data mode</h2>
+          <div className="space-y-3">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-1.5">
+                <span className="text-sm text-zinc-700 dark:text-zinc-200">
+                  Email source: {mockMode.use_mock_email ? "Mock fixtures" : "Real connected accounts"}
+                </span>
+                <InfoTooltip text="Mock scans a small built-in fixture inbox — no OAuth or real data touched. Real scans your actually-connected Gmail/Outlook accounts." />
+              </div>
+              <Toggle
+                label="Use real connected email accounts instead of mock fixtures"
+                checked={!mockMode.use_mock_email}
+                onChange={(checked) => toggleMockEmail(!checked)}
+              />
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-1.5">
+                <span className="text-sm text-zinc-700 dark:text-zinc-200">
+                  LLM processing: {mockMode.use_mock_llm ? "Mock (free, instant)" : "Real (uses your API key)"}
+                </span>
+                <InfoTooltip text="Mock parsing/summarization/embedding is free and instant, using canned logic instead of a real model. Real mode calls your configured OpenRouter/OpenAI key for every resume — for a large scan that's real cost and real time." />
+              </div>
+              <Toggle
+                label="Use real LLM processing instead of mock responses"
+                checked={!mockMode.use_mock_llm}
+                onChange={(checked) => toggleMockLlm(!checked)}
+                disabled={!mockMode.real_llm_available && mockMode.use_mock_llm}
+              />
+            </div>
+            {!mockMode.real_llm_available && (
+              <p className="flex items-center gap-1.5 text-xs text-amber-700 dark:text-amber-400">
+                <AlertTriangle size={12} /> No OPENROUTER_API_KEY or OPENAI_API_KEY configured — add one to
+                .env and restart the backend to enable real LLM processing.
+              </p>
+            )}
+            {!mockMode.use_mock_llm && (
+              <p className="flex items-center gap-1.5 text-xs text-amber-700 dark:text-amber-400">
+                <AlertTriangle size={12} /> Real LLM processing is on — every resume in your next scan will
+                call your configured provider and incur real cost.
+              </p>
+            )}
+          </div>
+        </Card>
+      )}
 
       <div className="space-y-6">
         <div>
@@ -216,7 +295,7 @@ export function ScanPage() {
             <h2 className="text-sm font-semibold text-zinc-700 dark:text-zinc-200">Set a date range</h2>
             <InfoTooltip text="Applies to both sources at once — narrows the scan to resumes/emails submitted in this window. Leave it open-ended to scan everything." />
           </div>
-          <DateRangePicker onChange={setDateRange} />
+          <DateRangePicker start={dateStart} end={dateEnd} activeLabel={dateRangeLabel} onChange={setDateRange} />
         </div>
 
         <div>
@@ -241,6 +320,13 @@ export function ScanPage() {
           {scanning && (
             <div className="mt-3">
               <ProgressBar pct={pct} label="Scanning and matching candidate identities…" remainingSeconds={remainingSeconds} overrun={overrun} />
+              {scanProgress && (
+                <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400" aria-live="polite">
+                  {scanProgress.resumes_found} resume(s) processed so far — {scanProgress.candidates_created} new,{" "}
+                  {scanProgress.candidates_updated} updated, {scanProgress.duplicates_skipped} already scanned
+                  {scanProgress.errors.length > 0 && `, ${scanProgress.errors.length} error(s)`}
+                </p>
+              )}
             </div>
           )}
         </div>
@@ -281,6 +367,7 @@ export function ScanPage() {
         )}
 
         <SampleDataGenerator />
+        <MaintenanceTasks />
         <DangerZone />
       </div>
     </div>

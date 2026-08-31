@@ -6,7 +6,7 @@ import { MatchBadge } from "../ui/match-badge";
 import type { JobMatchSummary } from "../../lib/types";
 
 // Requirement: a recruiter running matches for several jobs was losing
-// track of results — switching to the Candidate Results tab shows only one
+// track of results — switching to the Match Results tab shows only one
 // job at a time, and it's not obvious which job a result belongs to. This
 // gives each job card an inline "latest results" glance without leaving
 // the Job Descriptions page, with a link into the full, filterable view.

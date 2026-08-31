@@ -5,7 +5,7 @@ resolution, mirroring, matching) is source-agnostic.
 """
 
 from abc import ABC, abstractmethod
-from collections.abc import Iterator
+from collections.abc import AsyncIterator
 from datetime import datetime
 
 from app.models.schemas import IngestedResume
@@ -17,7 +17,11 @@ class ResumeIngestor(ABC):
         self,
         date_start: datetime | None = None,
         date_end: datetime | None = None,
-    ) -> Iterator[IngestedResume]:
-        """Yield every resume found in range. Implementations should stream,
-        not buffer, so large mailboxes/folder trees don't blow up memory."""
+    ) -> AsyncIterator[IngestedResume]:
+        """Yield every resume found in range. An async generator so network-
+        bound implementations (email) can overlap I/O instead of blocking the
+        event loop — see GmailIngestor/OutlookIngestor for the concurrent
+        fetch pattern. Implementations should still stream page-by-page
+        rather than buffering the whole mailbox, so large mailboxes/folder
+        trees don't blow up memory."""
         ...

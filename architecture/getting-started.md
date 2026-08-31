@@ -14,9 +14,11 @@ make run               # starts FastAPI on :8000
 curl http://localhost:8000/health
 ```
 
-`.env` defaults to `USE_MOCK=true` — the whole pipeline (parsing, matching, judge, even
-email ingestion via a fixture inbox) runs with zero external API calls. This is also what
-`make test` runs against.
+`.env` defaults to `USE_MOCK_LLM=true` and `USE_MOCK_EMAIL=true` — the whole pipeline
+(parsing, matching, judge, even email ingestion via a fixture inbox) runs with zero external
+API calls. This is also what `make test` runs against. Both are independent (a real-Gmail
+scan doesn't require real LLM calls too) and both are also live-toggleable from the Scan
+Sources page without restarting the backend.
 
 ## 2. Frontend setup
 
@@ -39,7 +41,7 @@ Open http://localhost:5173.
 Edit `.env`:
 
 ```
-USE_MOCK=false
+USE_MOCK_LLM=false
 OPENROUTER_API_KEY=sk-or-...
 # or, as a fallback provider:
 OPENAI_API_KEY=sk-...
@@ -102,7 +104,7 @@ if either the Python packages or the system binaries aren't present.
 
 ## Troubleshooting
 
-- **"No LLM provider configured"** — set `USE_MOCK=true`, or set an API key.
+- **"No LLM provider configured"** — set `USE_MOCK_LLM=true`, or set an API key.
 - **"GOOGLE_OAUTH_CLIENT_ID not configured"** — expected until you complete step 5 above;
   folder scanning works independently of email setup.
 - **Google sign-in says the app is blocked / not verified, even for your own account** — you

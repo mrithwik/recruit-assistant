@@ -11,7 +11,16 @@ from sqlalchemy import select
 
 from app.dependencies import get_storage
 from app.models.db import Candidate, Job, Match, ResumeSource
-from app.models.schemas import CandidateDetailOut, CandidateListOut, CandidateOut, MatchSummaryItem, ResumeSourceOut
+from app.models.enums import EmploymentStatus, WorkVisaStatus
+from app.models.schemas import (
+    CandidateDetailOut,
+    CandidateFacetsOut,
+    CandidateListOut,
+    CandidateMatchDetail,
+    CandidateOut,
+    MatchReasons,
+    ResumeSourceOut,
+)
 from app.scanning.parser import extract_text
 from app.storage.base import BaseStorageBackend
 
@@ -33,7 +42,25 @@ def _batch_origins(session, candidate_ids: list[str]) -> dict[str, list[str]]:
     return origins
 
 
-def _to_out(candidate: Candidate, origins: list[str]) -> CandidateOut:
+def _batch_email_links(session, candidate_ids: list[str]) -> dict[str, str]:
+    """Most recent non-blank email_link per candidate — one query for the
+    whole page rather than one per candidate, same reasoning as
+    _batch_origins. A candidate can have several email sources (re-applied
+    over time); the most recent one is the most useful deep link to surface."""
+    if not candidate_ids:
+        return {}
+    rows = session.execute(
+        select(ResumeSource.candidate_id, ResumeSource.email_link, ResumeSource.date_submitted)
+        .where(ResumeSource.candidate_id.in_(candidate_ids), ResumeSource.email_link != "")
+        .order_by(ResumeSource.date_submitted.desc())
+    ).all()
+    links: dict[str, str] = {}
+    for candidate_id, email_link, _date in rows:
+        links.setdefault(candidate_id, email_link)  # first hit per id is the most recent, rows are date-desc
+    return links
+
+
+def _to_out(candidate: Candidate, origins: list[str], email_link: str = "") -> CandidateOut:
     # A candidate can have many ResumeSource rows per origin (re-submitted
     # several times by email, say) — dedupe here so "sources" reads as which
     # channels this candidate was seen through, not a tally of every row.
@@ -58,6 +85,7 @@ def _to_out(candidate: Candidate, origins: list[str]) -> CandidateOut:
         portfolio_url=candidate.portfolio_url,
         sources=distinct_origins,
         history=candidate.history,
+        email_link=email_link,
     )
 
 
@@ -70,16 +98,47 @@ def list_candidates(
     sort: str = Query("recent", description="recent | oldest | name_asc | name_desc"),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
+    skill: list[str] | None = Query(None, description="repeatable; candidate must have at least one"),
+    employment_status: list[str] | None = Query(None, description="repeatable; any of"),
+    work_visa_status: list[str] | None = Query(None, description="repeatable; any of"),
+    experience_min: float | None = Query(None, ge=0),
+    experience_max: float | None = Query(None, ge=0),
     storage: BaseStorageBackend = Depends(get_storage),
 ):
     start_time = time.monotonic()
     with storage.session() as session:
         candidates, total = storage.candidates_page(
-            session, date_start, date_end, source, q, sort, limit, offset
+            session,
+            date_start,
+            date_end,
+            source,
+            q,
+            sort,
+            limit,
+            offset,
+            skills=skill,
+            employment_statuses=employment_status,
+            work_visa_statuses=work_visa_status,
+            experience_min=experience_min,
+            experience_max=experience_max,
         )
-        origins_by_candidate = _batch_origins(session, [c.id for c in candidates])
-        out = [_to_out(c, origins_by_candidate.get(c.id, [])) for c in candidates]
+        candidate_ids = [c.id for c in candidates]
+        origins_by_candidate = _batch_origins(session, candidate_ids)
+        email_links_by_candidate = _batch_email_links(session, candidate_ids)
+        out = [_to_out(c, origins_by_candidate.get(c.id, []), email_links_by_candidate.get(c.id, "")) for c in candidates]
         return CandidateListOut(candidates=out, total=total, elapsed_seconds=round(time.monotonic() - start_time, 3))
+
+
+@router.get("/facets", response_model=CandidateFacetsOut)
+def get_candidate_facets(storage: BaseStorageBackend = Depends(get_storage)):
+    with storage.session() as session:
+        skills, max_experience = storage.candidate_facets(session)
+        return CandidateFacetsOut(
+            skills=skills,
+            employment_statuses=[s.value for s in EmploymentStatus],
+            work_visa_statuses=[s.value for s in WorkVisaStatus],
+            experience_years_max=max_experience,
+        )
 
 
 @router.get("/{candidate_id}", response_model=CandidateDetailOut)
@@ -89,7 +148,8 @@ def get_candidate(candidate_id: str, storage: BaseStorageBackend = Depends(get_s
         if not candidate:
             raise HTTPException(404, "Candidate not found")
         origins = _batch_origins(session, [candidate.id]).get(candidate.id, [])
-        base = _to_out(candidate, origins)
+        email_link = _batch_email_links(session, [candidate.id]).get(candidate.id, "")
+        base = _to_out(candidate, origins, email_link)
 
         matches = list(
             session.execute(
@@ -100,8 +160,8 @@ def get_candidate(candidate_id: str, storage: BaseStorageBackend = Depends(get_s
             ).all()
         )
         full_name = f"{candidate.legal_first_name} {candidate.legal_last_name}".strip() or candidate.email
-        match_summaries = [
-            MatchSummaryItem(
+        match_details = [
+            CandidateMatchDetail(
                 match_id=m.id,
                 job_id=m.job_id,
                 job_title=title,
@@ -110,10 +170,14 @@ def get_candidate(candidate_id: str, storage: BaseStorageBackend = Depends(get_s
                 score=m.score,
                 tier=m.tier,
                 matched_at=m.matched_at,
+                reasons=MatchReasons(**m.reasons) if m.reasons else MatchReasons(),
+                missing_info=m.missing_info,
+                flags=m.flags,
+                judge_notes=m.judge_notes,
             )
             for m, title in matches
         ]
-        return CandidateDetailOut(**base.model_dump(), matches=match_summaries)
+        return CandidateDetailOut(**base.model_dump(), matches=match_details)
 
 
 @router.get("/{candidate_id}/sources", response_model=list[ResumeSourceOut])
@@ -135,6 +199,7 @@ def list_candidate_sources(candidate_id: str, storage: BaseStorageBackend = Depe
                 source_ref=s.source_ref,
                 date_submitted=s.date_submitted,
                 additional_attachments=s.additional_attachments,
+                email_link=s.email_link,
             )
             for s in sources
         ]

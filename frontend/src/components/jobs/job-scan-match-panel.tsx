@@ -5,8 +5,13 @@ import { useScanStore } from "../../stores/scan-store";
 import { useMatchesStore } from "../../stores/matches-store";
 import { useToastStore } from "../../stores/toast-store";
 import { Button } from "../ui/button";
+import { ProgressBar, useSimulatedProgress } from "../ui/progress-bar";
 
 type Mode = "existing_data" | "full_rescan";
+type Phase = "idle" | "scanning" | "matching";
+
+const MATCHING_ESTIMATED_SECONDS = 15;
+const SCAN_ESTIMATED_SECONDS = 20;
 
 // Per-job "restart a scan from existing data or re-ingest" (requirement 3),
 // placed directly on the job card rather than requiring a trip to the
@@ -14,19 +19,30 @@ type Mode = "existing_data" | "full_rescan";
 // operational hub instead of just a list.
 export function JobScanMatchPanel({ jobId }: { jobId: string }) {
   const [mode, setMode] = useState<Mode>("existing_data");
-  const [running, setRunning] = useState(false);
-  const { folderPaths, selectedAccountIds, scanFolders, scanEmail } = useScanStore();
+  const [phase, setPhase] = useState<Phase>("idle");
+  const { folderPaths, selectedAccountIds, scanFolders, scanEmail, scanning, scanProgress } = useScanStore();
   const runMatching = useMatchesStore((s) => s.runMatching);
+  const matchingLoading = useMatchesStore((s) => s.loading);
   const push = useToastStore((s) => s.push);
+  const { pct: matchPct, remainingSeconds: matchRemaining, overrun: matchOverrun } = useSimulatedProgress(
+    MATCHING_ESTIMATED_SECONDS,
+    phase === "matching",
+  );
+  const { pct: scanPct, remainingSeconds: scanRemaining, overrun: scanOverrun } = useSimulatedProgress(
+    SCAN_ESTIMATED_SECONDS,
+    phase === "scanning",
+  );
 
   const hasConfiguredSources = folderPaths.length > 0 || selectedAccountIds.length > 0;
+  const running = phase !== "idle";
 
   async function run() {
-    setRunning(true);
+    setPhase(mode === "full_rescan" ? "scanning" : "matching");
     try {
       if (mode === "full_rescan") {
         if (folderPaths.length > 0) await scanFolders();
         if (selectedAccountIds.length > 0) await scanEmail();
+        setPhase("matching");
       }
       const matches = await runMatching(jobId);
       const count = matches?.length ?? 0;
@@ -46,7 +62,7 @@ export function JobScanMatchPanel({ jobId }: { jobId: string }) {
     } catch (e) {
       push(String(e), "error");
     } finally {
-      setRunning(false);
+      setPhase("idle");
     }
   }
 
@@ -85,7 +101,7 @@ export function JobScanMatchPanel({ jobId }: { jobId: string }) {
         <Button
           size="sm"
           icon={mode === "existing_data" ? <Database size={13} /> : <Play size={13} />}
-          loading={running}
+          loading={running || matchingLoading}
           disabled={mode === "full_rescan" && !hasConfiguredSources}
           onClick={run}
         >
@@ -95,6 +111,23 @@ export function JobScanMatchPanel({ jobId }: { jobId: string }) {
           View results →
         </Link>
       </div>
+
+      {phase === "scanning" && scanning && (
+        <div className="mt-3">
+          <ProgressBar pct={scanPct} label="Scanning sources…" remainingSeconds={scanRemaining} overrun={scanOverrun} />
+          {scanProgress && (
+            <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+              {scanProgress.resumes_found} resume(s) processed — {scanProgress.candidates_created} new,{" "}
+              {scanProgress.candidates_updated} updated
+            </p>
+          )}
+        </div>
+      )}
+      {phase === "matching" && (
+        <div className="mt-3">
+          <ProgressBar pct={matchPct} label="Scoring candidates…" remainingSeconds={matchRemaining} overrun={matchOverrun} />
+        </div>
+      )}
     </div>
   );
 }

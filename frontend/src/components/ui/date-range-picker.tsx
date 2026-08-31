@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { CalendarRange } from "lucide-react";
 
-// Date-range control shared by Scan Sources, Candidate Results, and Search
+// Date-range control shared by Scan Sources, Match Results, and Search
 // History (requirement 2.8): days/weeks/years presets + custom range.
 const PRESETS = [
   { label: "7 days", days: 7 },
@@ -10,33 +10,57 @@ const PRESETS = [
   { label: "1 year", days: 365 },
 ];
 
+function toDateInputValue(iso?: string): string {
+  return iso ? iso.slice(0, 10) : "";
+}
+
+// Controlled by the parent's store rather than holding its own "which
+// preset is active" state — this component used to reset to "nothing
+// selected" every time it remounted (e.g. navigating to a different tab and
+// back), even though the underlying date range was still applied. See
+// scan-store's dateRangeLabel for why that state now lives one level up.
 export function DateRangePicker({
+  start,
+  end,
+  activeLabel,
   onChange,
 }: {
-  onChange: (start?: string, end?: string) => void;
+  start?: string;
+  end?: string;
+  activeLabel?: string;
+  onChange: (start?: string, end?: string, label?: string) => void;
 }) {
-  const [customStart, setCustomStart] = useState("");
-  const [customEnd, setCustomEnd] = useState("");
-  const [active, setActive] = useState<string>("");
+  const [customStart, setCustomStart] = useState(activeLabel === "custom" ? toDateInputValue(start) : "");
+  const [customEnd, setCustomEnd] = useState(activeLabel === "custom" ? toDateInputValue(end) : "");
+
+  // Keeps the custom-range inputs in sync if the active range changes from
+  // outside this component (e.g. reattaching persisted state on load).
+  useEffect(() => {
+    if (activeLabel === "custom") {
+      setCustomStart(toDateInputValue(start));
+      setCustomEnd(toDateInputValue(end));
+    }
+  }, [activeLabel, start, end]);
 
   function applyPreset(days: number, label: string) {
-    const end = new Date();
-    const start = new Date();
-    start.setDate(start.getDate() - days);
-    setActive(label);
-    onChange(start.toISOString(), end.toISOString());
+    const endDate = new Date();
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - days);
+    onChange(startDate.toISOString(), endDate.toISOString(), label);
   }
 
   function applyCustom() {
-    setActive("custom");
-    onChange(customStart ? new Date(customStart).toISOString() : undefined, customEnd ? new Date(customEnd).toISOString() : undefined);
+    onChange(
+      customStart ? new Date(customStart).toISOString() : undefined,
+      customEnd ? new Date(customEnd).toISOString() : undefined,
+      "custom",
+    );
   }
 
   function clear() {
-    setActive("");
     setCustomStart("");
     setCustomEnd("");
-    onChange(undefined, undefined);
+    onChange(undefined, undefined, undefined);
   }
 
   return (
@@ -48,7 +72,7 @@ export function DateRangePicker({
             key={p.label}
             onClick={() => applyPreset(p.days, p.label)}
             className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
-              active === p.label
+              activeLabel === p.label
                 ? "bg-white text-indigo-700 shadow-sm dark:bg-zinc-900 dark:text-indigo-300"
                 : "text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-100"
             }`}
@@ -78,7 +102,7 @@ export function DateRangePicker({
           Apply
         </button>
       </div>
-      {active ? (
+      {activeLabel ? (
         <button onClick={clear} className="text-xs text-indigo-600 underline-offset-2 hover:underline dark:text-indigo-400">
           Clear
         </button>

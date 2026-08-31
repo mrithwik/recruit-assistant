@@ -17,7 +17,7 @@ and `LLMClient`; routes pull them via `Depends(get_storage)` / `Depends(get_llm_
 - `folder_ingestor.py` — recursive multi-folder scan, content-hash dedupe, mtime as
   `date_submitted` fallback.
 - `email_ingestor.py` — `GmailIngestor` / `OutlookIngestor` (real Gmail API / Microsoft
-  Graph calls) + `MockEmailIngestor` (fixture inbox for `USE_MOCK=true`).
+  Graph calls) + `MockEmailIngestor` (fixture inbox for `USE_MOCK_EMAIL=true`).
 - `parser.py` — deterministic text extraction (pypdf/pdfplumber/python-docx) first, LLM
   structured-extraction fallback when extraction yields too little text. Always produces a
   `CandidateProfile`.

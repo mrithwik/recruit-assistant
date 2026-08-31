@@ -2,7 +2,7 @@
 Golden-set regression harness (requirement 7): fixed (JD, resume, expected
 tier) pairs used to catch regressions when prompts/models change.
 
-With USE_MOCK=true (CI default) the mock LLM returns a fixed canned score, so
+With USE_MOCK_LLM=true (CI default) the mock LLM returns a fixed canned score, so
 these tests only assert the pipeline runs end-to-end and produces a
 well-formed, in-range result — they can't judge match quality against a
 constant mock. The tier assertions (`expected_tier_min`/`expected_tier_max`)
@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from app.matching.llm_client import MockLLMClient, build_llm_client
+from app.matching.llm_client import MockLLMClient, build_real_llm_client
 from app.matching.matcher import deep_score, score_to_tier
 from app.models.enums import EmploymentStatus, WorkVisaStatus
 from app.models.schemas import CandidateProfile
@@ -54,11 +54,11 @@ async def test_golden_fixture_runs_and_scores_in_range(fixture):
 )
 @pytest.mark.parametrize("fixture", _load_fixtures(), ids=lambda f: f["name"])
 async def test_golden_fixture_live_tier(fixture):
-    llm = build_llm_client(
-        use_mock=False,
+    llm = build_real_llm_client(
         openrouter_key=os.getenv("OPENROUTER_API_KEY", ""),
         openai_key=os.getenv("OPENAI_API_KEY", ""),
     )
+    assert llm is not None, "RUN_LIVE_GOLDEN requires a real provider key (skipif above should have caught this)"
     profile = CandidateProfile(
         raw_text=fixture["resume_text"],
         employment_status=EmploymentStatus.UNKNOWN,
