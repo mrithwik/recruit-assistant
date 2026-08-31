@@ -22,12 +22,12 @@ being buried in a chat transcript."""
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import Settings
 from app.maintenance.email_link_backfill import backfill_email_links
-from app.models.db import ResumeSource
+from app.models.db import EmailAccount, ResumeSource
 from app.models.schemas import ScanResult
 
 TaskFn = Callable[[Session, Settings, Callable[[ScanResult], None]], Awaitable[ScanResult]]
@@ -49,9 +49,19 @@ class MaintenanceTask:
 
 
 def _email_link_pending_count(session: Session) -> int:
-    return session.execute(
-        select(func.count()).select_from(ResumeSource).where(ResumeSource.origin == "email", ResumeSource.email_link == "")
-    ).scalar_one()
+    # Only counts rows the backfill can actually resolve — a row whose
+    # source_ref account prefix has no matching EmailAccount (mock/sample
+    # data, or an account since disconnected) can never get a real link, so
+    # counting it as "pending" made the Dashboard banner and this task's
+    # "N skipped" result look permanently stuck/broken even on a fully
+    # successful run (see backfill_email_links' skipped_no_account).
+    unlinked = session.execute(
+        select(ResumeSource.source_ref).where(ResumeSource.origin == "email", ResumeSource.email_link == "")
+    ).scalars().all()
+    if not unlinked:
+        return 0
+    known_accounts = set(session.execute(select(EmailAccount.email_address)).scalars())
+    return sum(1 for ref in unlinked if ":" in ref and ref.split(":", 1)[0] in known_accounts)
 
 
 TASKS: dict[str, MaintenanceTask] = {

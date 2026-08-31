@@ -43,7 +43,7 @@ def test_pending_count_is_zero_with_no_data(client):
 
 def test_pending_count_reflects_sources_missing_email_link(client):
     from app.dependencies import get_storage
-    from app.models.db import Candidate, ResumeSource
+    from app.models.db import Candidate, EmailAccount, ResumeSource
 
     storage = get_storage()
     with storage.session() as session:
@@ -54,6 +54,16 @@ def test_pending_count_reflects_sources_missing_email_link(client):
             date_submitted=datetime.utcnow(),
         )
         session.add(candidate)
+        # A pending row only counts if a real connected account can resolve
+        # it — see _email_link_pending_count.
+        session.add(
+            EmailAccount(
+                id=str(uuid.uuid4()),
+                provider="gmail",
+                email_address="me@example.com",
+                keychain_ref="test-ref",
+            )
+        )
         session.add(
             ResumeSource(
                 id=str(uuid.uuid4()),
