@@ -281,6 +281,7 @@ def get_candidate(candidate_id: str, storage: BaseStorageBackend = Depends(get_s
                 candidate_name=full_name,
                 score=m.score,
                 tier=m.tier,
+                pipeline_stage=m.pipeline_stage,
                 matched_at=m.matched_at,
                 reasons=MatchReasons(**m.reasons) if m.reasons else MatchReasons(),
                 missing_info=m.missing_info,

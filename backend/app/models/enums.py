@@ -18,6 +18,18 @@ class MatchTier(str, enum.Enum):
     RED_FLAG = "red_flagged"   # darkest red — overrides score-based tier
 
 
+class PipelineStage(str, enum.Enum):
+    """Where a candidate stands in the hiring process for one job — independent of tier."""
+
+    SOURCED = "sourced"            # default — every match starts here
+    SCREENED = "screened"
+    SUBMITTED = "submitted"        # submitted to client
+    INTERVIEWING = "interviewing"
+    OFFER = "offer"
+    PLACED = "placed"
+    DECLINED = "declined"
+
+
 class FlagColor(str, enum.Enum):
     GREEN = "green"
     RED = "red"

@@ -3,7 +3,7 @@ import { persist } from "zustand/middleware";
 import { api } from "../lib/api";
 import { useToastStore } from "./toast-store";
 import { useDataModeStore } from "./data-mode-store";
-import type { Match, ScanResult } from "../lib/types";
+import type { Match, PipelineStage, ScanResult } from "../lib/types";
 
 const POLL_INTERVAL_MS = 1500;
 
@@ -39,6 +39,7 @@ interface MatchesState {
   loadMatches: (jobId: string) => Promise<void>;
   runMatching: (jobId: string, batchId?: string) => Promise<Match[]>;
   flag: (matchId: string, color: "green" | "red", note: string) => Promise<void>;
+  updateStage: (matchId: string, stage: PipelineStage) => Promise<void>;
   rescanMatched: (jobId: string, batchId?: string) => Promise<void>;
   resumeRescanIfAny: () => Promise<void>;
   resumeRunMatchingIfAny: () => Promise<void>;
@@ -152,6 +153,10 @@ export const useMatchesStore = create<MatchesState>()(
         },
         flag: async (matchId, color, note) => {
           const updated = await api.flagMatch(matchId, color, note);
+          set((s) => ({ matches: s.matches.map((m) => (m.id === matchId ? updated : m)) }));
+        },
+        updateStage: async (matchId, stage) => {
+          const updated = await api.updateMatchStage(matchId, stage);
           set((s) => ({ matches: s.matches.map((m) => (m.id === matchId ? updated : m)) }));
         },
         rescanMatched: async (jobId, batchId) => {

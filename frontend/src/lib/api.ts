@@ -211,6 +211,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ color, note }),
     }),
+  updateMatchStage: (matchId: string, stage: import("./types").PipelineStage) =>
+    request<import("./types").Match>(`/matches/${matchId}/stage`, {
+      method: "POST",
+      body: JSON.stringify({ stage }),
+    }),
 
   listCriteria: (jobId?: string) =>
     request<import("./types").Criterion[]>(`/criteria${jobId ? `?job_id=${jobId}` : ""}`),

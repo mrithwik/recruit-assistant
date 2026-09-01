@@ -1,5 +1,14 @@
 export type MatchTier = "great_match" | "good_match" | "average_match" | "poor_match" | "red_flagged";
 
+export type PipelineStage =
+  | "sourced"
+  | "screened"
+  | "submitted"
+  | "interviewing"
+  | "offer"
+  | "placed"
+  | "declined";
+
 export interface AuthStatus {
   setup_complete: boolean;
 }
@@ -64,6 +73,7 @@ export interface MatchSummaryItem {
   candidate_name: string;
   score: number;
   tier: MatchTier;
+  pipeline_stage: PipelineStage;
   matched_at: string;
 }
 
@@ -119,6 +129,7 @@ export interface Match {
   candidate: Candidate;
   score: number;
   tier: MatchTier;
+  pipeline_stage: PipelineStage;
   reasons: { matched: string[]; gaps: string[] };
   missing_info: string[];
   flags: Flag[];
@@ -282,6 +293,11 @@ export interface TierCount {
   count: number;
 }
 
+export interface PipelineStageCount {
+  stage: PipelineStage;
+  count: number;
+}
+
 export interface NamedCount {
   label: string;
   count: number;
@@ -313,6 +329,7 @@ export interface DashboardSummary {
   kpis: DashboardKPIs;
   inflow_trend: InflowDay[];
   tier_distribution: TierCount[];
+  pipeline_stage_distribution: PipelineStageCount[];
   red_flagged_count: number;
   top_skills: NamedCount[];
   visa_breakdown: NamedCount[];

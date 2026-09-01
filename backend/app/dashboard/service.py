@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 
 from app.data_classification import candidate_id_condition, is_mock_source_condition
 from app.models.db import Candidate, EmailAccount, IngestScanHistoryEntry, Job, Match, ResumeSource, SearchHistoryEntry
-from app.models.enums import MatchTier
+from app.models.enums import MatchTier, PipelineStage
 from app.models.schemas import (
     ActivityItem,
     DashboardKPIs,
@@ -26,6 +26,7 @@ from app.models.schemas import (
     InflowDay,
     JobSnapshot,
     NamedCount,
+    PipelineStageCount,
     TierCount,
 )
 
@@ -35,6 +36,15 @@ VISA_BREAKDOWN_LIMIT = 8
 MISSING_INFO_LIMIT = 8
 RECENT_ACTIVITY_LIMIT = 10
 ORDINAL_TIERS = [MatchTier.POOR, MatchTier.AVERAGE, MatchTier.GOOD, MatchTier.GREAT]
+ORDINAL_STAGES = [
+    PipelineStage.SOURCED,
+    PipelineStage.SCREENED,
+    PipelineStage.SUBMITTED,
+    PipelineStage.INTERVIEWING,
+    PipelineStage.OFFER,
+    PipelineStage.PLACED,
+    PipelineStage.DECLINED,
+]
 
 
 def _kpis(session: Session, data_mode: str) -> tuple[DashboardKPIs, int]:
@@ -109,6 +119,16 @@ def _tier_distribution(session: Session, data_mode: str) -> list[TierCount]:
     rows = session.execute(stmt.group_by(Match.tier)).all()
     counts = {tier: count for tier, count in rows}
     return [TierCount(tier=t.value, count=counts.get(t.value, 0)) for t in ORDINAL_TIERS]
+
+
+def _pipeline_stage_distribution(session: Session, data_mode: str) -> list[PipelineStageCount]:
+    stmt = select(Match.pipeline_stage, func.count())
+    match_condition = candidate_id_condition(Match.candidate_id, data_mode)
+    if match_condition is not None:
+        stmt = stmt.where(match_condition)
+    rows = session.execute(stmt.group_by(Match.pipeline_stage)).all()
+    counts = {stage: count for stage, count in rows}
+    return [PipelineStageCount(stage=s.value, count=counts.get(s.value, 0)) for s in ORDINAL_STAGES]
 
 
 def _top_skills(session: Session, data_mode: str) -> list[NamedCount]:
@@ -316,6 +336,7 @@ def build_dashboard_summary(session: Session, data_mode: str = "all") -> Dashboa
         kpis=kpis,
         inflow_trend=_inflow_trend(session, data_mode),
         tier_distribution=_tier_distribution(session, data_mode),
+        pipeline_stage_distribution=_pipeline_stage_distribution(session, data_mode),
         red_flagged_count=red_flagged_count,
         top_skills=_top_skills(session, data_mode),
         visa_breakdown=_visa_breakdown(session, data_mode),

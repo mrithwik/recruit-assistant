@@ -3,6 +3,7 @@ from datetime import datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
 from app.dashboard.service import build_dashboard_summary
 from app.models.db import Candidate, IngestScanHistoryEntry, Job, Match, ResumeSource, SearchHistoryEntry
@@ -122,6 +123,29 @@ def test_dashboard_summary_aggregates_seeded_data(storage):
     inflow_total_email = sum(d.email for d in summary.inflow_trend)
     assert inflow_total_folder == 1
     assert inflow_total_email == 1
+
+
+def test_dashboard_pipeline_stage_distribution_zero_fills_and_counts(storage):
+    job_id = _seed(storage)
+
+    with storage.session() as session:
+        matches = list(session.execute(select(Match).where(Match.job_id == job_id)).scalars())
+        assert {m.pipeline_stage for m in matches} == {"sourced"}
+        matches[0].pipeline_stage = "interviewing"
+        session.commit()
+
+        summary = build_dashboard_summary(session)
+
+    stages = {s.stage: s.count for s in summary.pipeline_stage_distribution}
+    assert stages == {
+        "sourced": 1,
+        "screened": 0,
+        "submitted": 0,
+        "interviewing": 1,
+        "offer": 0,
+        "placed": 0,
+        "declined": 0,
+    }
 
 
 def test_needs_attention_kpi_counts_each_match_once(storage):

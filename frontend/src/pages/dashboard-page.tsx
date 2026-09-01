@@ -19,6 +19,7 @@ import { StatTile } from "../components/dashboard/stat-tile";
 import { SectionCard } from "../components/dashboard/section-card";
 import { InflowChart } from "../components/dashboard/inflow-chart";
 import { TierChart } from "../components/dashboard/tier-chart";
+import { PipelineChart } from "../components/dashboard/pipeline-chart";
 import { RankedBarChart } from "../components/dashboard/ranked-bar-chart";
 import { JobsSnapshotList } from "../components/dashboard/jobs-snapshot-list";
 import { ActivityFeed } from "../components/dashboard/activity-feed";
@@ -152,6 +153,12 @@ export function DashboardPage() {
               subtitle={summary.red_flagged_count > 0 ? `${summary.red_flagged_count} red-flagged (excluded above)` : "Across all scored matches"}
             >
               <TierChart data={summary.tier_distribution} />
+            </SectionCard>
+          </div>
+
+          <div className="grid grid-cols-1 gap-4">
+            <SectionCard title="Pipeline stage" subtitle="Where candidates stand in the hiring process, across all jobs">
+              <PipelineChart data={summary.pipeline_stage_distribution} />
             </SectionCard>
           </div>
 

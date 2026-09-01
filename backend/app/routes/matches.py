@@ -16,7 +16,17 @@ from app.matching.concurrency import bounded_gather
 from app.matching.llm_client import LLMClient
 from app.matching.matcher import match_job_against_pool, score_to_tier
 from app.models.db import Candidate, Job, Match, SearchHistoryEntry
-from app.models.schemas import FlagIn, JobMatchSummary, MatchListOut, MatchOut, MatchReasons, MatchSummaryItem, ScanJobOut, ScanResult
+from app.models.schemas import (
+    FlagIn,
+    JobMatchSummary,
+    MatchListOut,
+    MatchOut,
+    MatchReasons,
+    MatchSummaryItem,
+    PipelineStageIn,
+    ScanJobOut,
+    ScanResult,
+)
 from app.routes.candidates import _batch_email_links, _batch_origins, _to_out
 from app.scanning.job_registry import ScanAlreadyRunningError, complete_job, create_job, fail_job, is_cancel_requested
 from app.storage.base import BaseStorageBackend
@@ -44,6 +54,7 @@ def _match_to_out(match: Match, candidate: Candidate, origins: list[str], email_
         candidate=_to_out(candidate, origins, email_link),
         score=match.score,
         tier=match.tier,
+        pipeline_stage=match.pipeline_stage,
         reasons=MatchReasons(**match.reasons) if match.reasons else MatchReasons(),
         missing_info=match.missing_info,
         flags=match.flags,
@@ -249,6 +260,7 @@ def get_match_summary(job_id: str, storage: BaseStorageBackend = Depends(get_sto
                     candidate_name=name,
                     score=m.score,
                     tier=m.tier,
+                    pipeline_stage=m.pipeline_stage,
                     matched_at=m.matched_at,
                 )
             )
@@ -308,6 +320,20 @@ def add_flag(match_id: str, flag: FlagIn, storage: BaseStorageBackend = Depends(
             from app.models.enums import MatchTier
 
             match.tier = MatchTier.RED_FLAG.value
+        session.commit()
+        candidate = session.get(Candidate, match.candidate_id)
+        origins = _batch_origins(session, [candidate.id]).get(candidate.id, [])
+        email_link = _batch_email_links(session, [candidate.id]).get(candidate.id, "")
+        return _match_to_out(match, candidate, origins, email_link)
+
+
+@router.post("/{match_id}/stage", response_model=MatchOut)
+def update_pipeline_stage(match_id: str, stage_in: PipelineStageIn, storage: BaseStorageBackend = Depends(get_storage)):
+    with storage.session() as session:
+        match = session.get(Match, match_id)
+        if not match:
+            raise HTTPException(404, "Match not found")
+        match.pipeline_stage = stage_in.stage.value
         session.commit()
         candidate = session.get(Candidate, match.candidate_id)
         origins = _batch_origins(session, [candidate.id]).get(candidate.id, [])

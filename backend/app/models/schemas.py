@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 
 from pydantic import BaseModel, Field, field_validator
 
-from app.models.enums import EmploymentStatus, MatchTier, ResumeOrigin, WorkVisaStatus
+from app.models.enums import EmploymentStatus, MatchTier, PipelineStage, ResumeOrigin, WorkVisaStatus
 
 
 def _to_naive_utc(value: datetime | None) -> datetime | None:
@@ -279,12 +279,17 @@ class FlagIn(BaseModel):
     note: str = ""
 
 
+class PipelineStageIn(BaseModel):
+    stage: PipelineStage
+
+
 class MatchOut(BaseModel):
     id: str
     job_id: str
     candidate: CandidateOut
     score: float
     tier: MatchTier
+    pipeline_stage: PipelineStage
     reasons: MatchReasons
     missing_info: list[str]
     flags: list[dict]
@@ -312,6 +317,7 @@ class MatchSummaryItem(BaseModel):
     candidate_name: str
     score: float
     tier: MatchTier
+    pipeline_stage: PipelineStage
     matched_at: datetime
 
 
@@ -465,6 +471,11 @@ class TierCount(BaseModel):
     count: int
 
 
+class PipelineStageCount(BaseModel):
+    stage: str
+    count: int
+
+
 class NamedCount(BaseModel):
     label: str
     count: int
@@ -501,6 +512,7 @@ class DashboardSummary(BaseModel):
     kpis: DashboardKPIs
     inflow_trend: list[InflowDay]
     tier_distribution: list[TierCount]
+    pipeline_stage_distribution: list[PipelineStageCount]
     red_flagged_count: int
     top_skills: list[NamedCount]
     visa_breakdown: list[NamedCount]

@@ -22,6 +22,7 @@ import { useMatchesStore } from "../stores/matches-store";
 import { useToastStore } from "../stores/toast-store";
 import { useDataModeStore } from "../stores/data-mode-store";
 import { MatchBadge } from "../components/ui/match-badge";
+import { PIPELINE_STAGE_OPTIONS, PipelineStageBadge, STAGE_LABELS } from "../components/ui/pipeline-stage-badge";
 import { DraftEmailModal } from "../components/candidates/draft-email-modal";
 import { CandidateCompareModal } from "../components/candidates/candidate-compare-modal";
 import { PageHeader } from "../components/ui/page-header";
@@ -34,7 +35,7 @@ import { SourceBadges } from "../components/ui/source-badges";
 import { SortSelect } from "../components/ui/sort-select";
 import { TimingBadge } from "../components/ui/timing-badge";
 import { onNumberChange, selectOnFocus } from "../lib/number-input";
-import type { Match } from "../lib/types";
+import type { Match, PipelineStage } from "../lib/types";
 
 const RESULTS_PAGE_SIZE = 10;
 
@@ -77,6 +78,7 @@ export function ResultsPage() {
     loadMatches,
     runMatching,
     flag,
+    updateStage,
     loading,
     lastElapsedSeconds,
     lastLoadWasFullRun,
@@ -100,6 +102,7 @@ export function ResultsPage() {
   const [compareIds, setCompareIds] = useState<Set<string>>(new Set());
   const [comparing, setComparing] = useState(false);
   const [sort, setSort] = useState<SortKey>("best_match");
+  const [stageFilter, setStageFilter] = useState<PipelineStage | "all">("all");
   const [page, setPage] = useState(1);
   // What the currently-displayed results were actually loaded with — Top N
   // and Sort are edited freely, but only take effect once "Load results" is
@@ -225,6 +228,14 @@ export function ResultsPage() {
     }
   }
 
+  async function handleStageChange(matchId: string, stage: PipelineStage) {
+    try {
+      await updateStage(matchId, stage);
+    } catch (e) {
+      push(String(e), "error");
+    }
+  }
+
   function toggleExpanded(id: string) {
     setExpandedIds((prev) => {
       const next = new Set(prev);
@@ -248,6 +259,13 @@ export function ResultsPage() {
   // hasPendingChanges below, Sort only takes effect once "Load results" is
   // clicked, same as Top N.
   const sortedMatches = useMemo(() => sortMatches(matches, appliedSort), [matches, appliedSort]);
+  // Stage filter applies live to whatever's already loaded — unlike Top N/
+  // Sort, it's a pure client-side narrowing of the current result set, so
+  // there's no reason to gate it behind "Load results".
+  const filteredMatches = useMemo(
+    () => (stageFilter === "all" ? sortedMatches : sortedMatches.filter((m) => m.pipeline_stage === stageFilter)),
+    [sortedMatches, stageFilter],
+  );
   // A job switch reloads immediately (see handleJobChange) so this should
   // only ever be true for the brief moment between selecting a job and its
   // load completing — kept as a safety net against showing mismatched
@@ -262,13 +280,13 @@ export function ResultsPage() {
   const fewerResultsThanRequested =
     !resultsAreStale && lastLoadedTopN !== null && matches.length > 0 && matches.length < lastLoadedTopN;
 
-  const totalPages = Math.max(1, Math.ceil(sortedMatches.length / RESULTS_PAGE_SIZE));
+  const totalPages = Math.max(1, Math.ceil(filteredMatches.length / RESULTS_PAGE_SIZE));
   const pageMatches = useMemo(
-    () => sortedMatches.slice((page - 1) * RESULTS_PAGE_SIZE, page * RESULTS_PAGE_SIZE),
-    [sortedMatches, page],
+    () => filteredMatches.slice((page - 1) * RESULTS_PAGE_SIZE, page * RESULTS_PAGE_SIZE),
+    [filteredMatches, page],
   );
-  const pageStart = sortedMatches.length === 0 ? 0 : (page - 1) * RESULTS_PAGE_SIZE + 1;
-  const pageEnd = Math.min(page * RESULTS_PAGE_SIZE, sortedMatches.length);
+  const pageStart = filteredMatches.length === 0 ? 0 : (page - 1) * RESULTS_PAGE_SIZE + 1;
+  const pageEnd = Math.min(page * RESULTS_PAGE_SIZE, filteredMatches.length);
   // expandedIds accumulates whichever page's cards were last expanded and
   // isn't cleared on paging (so paging back preserves what you had open) —
   // "all expanded" has to be judged against the CURRENT page's cards, not
@@ -279,7 +297,7 @@ export function ResultsPage() {
 
   useEffect(() => {
     setPage(1);
-  }, [selectedJobId, appliedSort]);
+  }, [selectedJobId, appliedSort, stageFilter]);
 
   useEffect(() => {
     if (page > totalPages) setPage(totalPages);
@@ -336,6 +354,14 @@ export function ResultsPage() {
           Check for updates
         </Button>
         <SortSelect value={sort} onChange={setSort} options={SORT_OPTIONS} />
+        <SortSelect
+          value={stageFilter}
+          onChange={setStageFilter}
+          options={[
+            { value: "all" as const, label: "All stages" },
+            ...PIPELINE_STAGE_OPTIONS.map((s) => ({ value: s, label: STAGE_LABELS[s] })),
+          ]}
+        />
         {!loading && !isMatchingSelectedJob && (
           <TimingBadge seconds={lastElapsedSeconds} label={lastLoadWasFullRun ? "Matched" : "Loaded"} />
         )}
@@ -430,10 +456,10 @@ export function ResultsPage() {
         </div>
       )}
 
-      {!resultsAreStale && sortedMatches.length > 0 && (
+      {!resultsAreStale && filteredMatches.length > 0 && (
         <div className="mb-2 flex items-center justify-between">
           <p className="text-xs text-zinc-500 dark:text-zinc-400">
-            Showing {pageStart}–{pageEnd} of {sortedMatches.length} matched candidate{sortedMatches.length === 1 ? "" : "s"}
+            Showing {pageStart}–{pageEnd} of {filteredMatches.length} matched candidate{filteredMatches.length === 1 ? "" : "s"}
           </p>
           <div className="flex items-center gap-3">
           <button
@@ -441,12 +467,13 @@ export function ResultsPage() {
               downloadCsv(
                 `${(selectedJob?.title ?? "matches").toLowerCase().replace(/[^a-z0-9]+/g, "-")}-matches.csv`,
                 [
-                  ["Name", "Email", "Score", "Tier", "Matched", "Gaps", "Missing info"],
-                  ...sortedMatches.map((m) => [
+                  ["Name", "Email", "Score", "Tier", "Stage", "Matched", "Gaps", "Missing info"],
+                  ...filteredMatches.map((m) => [
                     `${m.candidate.legal_first_name} ${m.candidate.legal_last_name}`.trim() || m.candidate.email,
                     m.candidate.email,
                     m.score,
                     m.tier,
+                    m.pipeline_stage,
                     m.reasons.matched.join("; "),
                     m.reasons.gaps.join("; "),
                     m.missing_info.join("; "),
@@ -531,6 +558,7 @@ export function ResultsPage() {
                         : m.candidate.email || "Unnamed candidate"}
                     </button>
                     <MatchBadge tier={m.tier} score={m.score} />
+                    <PipelineStageBadge stage={m.pipeline_stage} />
                   </div>
                   <p className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-sm text-zinc-500 dark:text-zinc-400">
                     Submitted {new Date(m.candidate.date_submitted).toLocaleDateString()} via{" "}
@@ -554,6 +582,18 @@ export function ResultsPage() {
                 </div>
               </div>
               <div className="flex shrink-0 items-center gap-1">
+                <select
+                  value={m.pipeline_stage}
+                  onChange={(e) => handleStageChange(m.id, e.target.value as PipelineStage)}
+                  title="Pipeline stage"
+                  className="mr-1 rounded-md border border-zinc-200 bg-white px-1.5 py-1 text-xs font-medium text-zinc-700 outline-none dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
+                >
+                  {PIPELINE_STAGE_OPTIONS.map((s) => (
+                    <option key={s} value={s}>
+                      {STAGE_LABELS[s]}
+                    </option>
+                  ))}
+                </select>
                 <button
                   onClick={() => handleFlag(m.id, "green")}
                   title="Green flag"

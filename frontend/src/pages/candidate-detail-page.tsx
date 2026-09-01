@@ -26,6 +26,7 @@ import { Card } from "../components/ui/card";
 import { Button } from "../components/ui/button";
 import { Textarea } from "../components/ui/input";
 import { MatchBadge } from "../components/ui/match-badge";
+import { PipelineStageBadge } from "../components/ui/pipeline-stage-badge";
 import { SourceBadges } from "../components/ui/source-badges";
 import { ProgressBar, useSimulatedProgress } from "../components/ui/progress-bar";
 import { CancelJobButton } from "../components/ui/cancel-job-button";
@@ -371,7 +372,10 @@ export function CandidateDetailPage() {
                       </button>
                       <p className="text-xs text-zinc-400">Scored {new Date(m.matched_at).toLocaleDateString()}</p>
                     </div>
-                    <MatchBadge tier={m.tier} score={m.score} />
+                    <div className="flex shrink-0 items-center gap-2">
+                      <MatchBadge tier={m.tier} score={m.score} />
+                      <PipelineStageBadge stage={m.pipeline_stage} />
+                    </div>
                   </div>
 
                   {needsAttention && (

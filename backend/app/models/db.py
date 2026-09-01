@@ -11,6 +11,8 @@ from datetime import datetime
 from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
+from app.models.enums import PipelineStage
+
 
 class Base(DeclarativeBase):
     pass
@@ -144,6 +146,7 @@ class Match(Base):
     reasons: Mapped[dict] = mapped_column(JSON, default=dict)     # {matched: [...], gaps: [...]}
     missing_info: Mapped[list] = mapped_column(JSON, default=list)
     flags: Mapped[list] = mapped_column(JSON, default=list)       # [{color, note, added_by}]
+    pipeline_stage: Mapped[str] = mapped_column(String, default=PipelineStage.SOURCED.value)
     judge_notes: Mapped[str] = mapped_column(Text, default="")
     criteria_version: Mapped[int] = mapped_column(default=1)
     matched_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
