@@ -9,7 +9,11 @@ setup: ## Install backend dependencies and set up .env
 	mkdir -p data
 
 run: ## Run the backend (single FastAPI app)
-	cd backend && python -m uvicorn app.main:app --host "$${API_HOST:-127.0.0.1}" --port 8000 --reload
+	@# See scripts/run_all.sh — .env is only loaded by the Python process
+	@# itself (pydantic-settings), so API_HOST/API_PORT are pulled out here
+	@# with grep/cut rather than sourced wholesale (.env commonly has values,
+	@# like an app password, with unescaped spaces that aren't valid bash).
+	bash -c 'cd backend && env_host=$$( { grep -E "^API_HOST=" ../.env || true; } 2>/dev/null | tail -1 | cut -d= -f2- | sed "s/[[:space:]]*#.*//"); env_port=$$( { grep -E "^API_PORT=" ../.env || true; } 2>/dev/null | tail -1 | cut -d= -f2- | sed "s/[[:space:]]*#.*//"); exec python -m uvicorn app.main:app --host "$${API_HOST:-$${env_host:-127.0.0.1}}" --port "$${API_PORT:-$${env_port:-8000}}" --reload'
 
 test: ## Run backend tests (unit + golden-set matching regression)
 	python -m pytest backend/tests/ -v
