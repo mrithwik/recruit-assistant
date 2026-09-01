@@ -93,6 +93,12 @@ class Candidate(Base):
     # sorted on write, not just appended).
     history: Mapped[list] = mapped_column(JSON, default=list)
 
+    # A recruiter's own free-text notes on this person — "why I passed",
+    # "call back in Q2" — independent of any one job match (judge_notes and
+    # per-flag notes both live on Match, scoped to one job; this doesn't
+    # belong to any job). List of {id, text, created_at}, newest first.
+    recruiter_notes: Mapped[list] = mapped_column(JSON, default=list)
+
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, onupdate=_now)
 

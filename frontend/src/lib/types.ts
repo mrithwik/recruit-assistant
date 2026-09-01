@@ -26,6 +26,12 @@ export interface Job {
   created_at: string;
 }
 
+export interface CandidateNote {
+  id: string;
+  text: string;
+  created_at: string;
+}
+
 export interface Candidate {
   id: string;
   legal_first_name: string;
@@ -46,6 +52,7 @@ export interface Candidate {
   portfolio_url: string;
   sources: string[];
   history: { date: string; origin: string; note: string }[];
+  recruiter_notes: CandidateNote[];
   email_link: string;
 }
 

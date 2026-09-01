@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { AlertTriangle, Download, ListFilter, Mail, RefreshCw, Search, Users, X } from "lucide-react";
+import { AlertTriangle, Check, Download, ListFilter, Mail, RefreshCw, Search, Users, X } from "lucide-react";
 import { api } from "../lib/api";
 import { useCandidatesStore, CANDIDATES_PAGE_SIZE } from "../stores/candidates-store";
 import { useToastStore } from "../stores/toast-store";
@@ -124,6 +124,47 @@ export function AllCandidatesPage() {
   function toggleNeedsAttention() {
     setNeedsAttention(!needsAttention);
     fetchCandidates().catch((e) => push(String(e), "error"));
+  }
+
+  // Persists across pages (not reset on page change) so a recruiter can
+  // check a few candidates on page 1, page over, check a few more on page
+  // 2, and export the combined hand-picked set in one go — resetting on
+  // page change would make cross-page selection impossible.
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [exportingSelected, setExportingSelected] = useState(false);
+
+  function toggleSelected(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  const allOnPageSelected = candidates.length > 0 && candidates.every((c) => selectedIds.has(c.id));
+
+  function toggleSelectAllOnPage() {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (allOnPageSelected) {
+        for (const c of candidates) next.delete(c.id);
+      } else {
+        for (const c of candidates) next.add(c.id);
+      }
+      return next;
+    });
+  }
+
+  async function handleExportSelected() {
+    setExportingSelected(true);
+    try {
+      await api.exportSelectedCandidates(Array.from(selectedIds));
+    } catch (e) {
+      push(String(e), "error");
+    } finally {
+      setExportingSelected(false);
+    }
   }
 
   const [exporting, setExporting] = useState(false);
@@ -325,6 +366,48 @@ export function AllCandidatesPage() {
         />
       )}
 
+      {candidates.length > 0 && (
+        <div className="mb-2 flex items-center gap-4 text-xs text-zinc-500 dark:text-zinc-400">
+          <button
+            type="button"
+            onClick={toggleSelectAllOnPage}
+            className="flex items-center gap-1.5 font-medium hover:text-zinc-700 dark:hover:text-zinc-300"
+          >
+            <span
+              className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border ${
+                allOnPageSelected
+                  ? "border-indigo-600 bg-indigo-600 text-white"
+                  : "border-zinc-300 dark:border-zinc-600"
+              }`}
+            >
+              {allOnPageSelected && <Check size={11} />}
+            </span>
+            Select all on this page
+          </button>
+          {selectedIds.size > 0 && (
+            <>
+              <span>{selectedIds.size} selected</span>
+              <Button
+                variant="secondary"
+                size="sm"
+                icon={<Download size={12} />}
+                loading={exportingSelected}
+                onClick={handleExportSelected}
+              >
+                Export selected
+              </Button>
+              <button
+                type="button"
+                onClick={() => setSelectedIds(new Set())}
+                className="font-medium hover:text-zinc-700 dark:hover:text-zinc-300"
+              >
+                Clear selection
+              </button>
+            </>
+          )}
+        </div>
+      )}
+
       <div className="flex flex-col gap-2">
         {candidates.map((c: Candidate) => (
           <Card
@@ -334,13 +417,30 @@ export function AllCandidatesPage() {
             onClick={() => navigate(`/app/candidates/${c.id}`)}
           >
             <div className="flex flex-wrap items-start justify-between gap-2">
-              <div className="min-w-0">
-                <p className="font-medium text-zinc-900 dark:text-white">
-                  {c.legal_first_name || c.legal_last_name ? `${c.legal_first_name} ${c.legal_last_name}`.trim() : c.email || "Unnamed candidate"}
-                </p>
-                <p className="mt-0.5 line-clamp-1 text-sm text-zinc-500 dark:text-zinc-400">
-                  {c.semantic_summary || "No summary yet"}
-                </p>
+              <div className="flex min-w-0 items-start gap-2.5">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    toggleSelected(c.id);
+                  }}
+                  className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border ${
+                    selectedIds.has(c.id)
+                      ? "border-indigo-600 bg-indigo-600 text-white"
+                      : "border-zinc-300 dark:border-zinc-600"
+                  }`}
+                  aria-label="Select candidate"
+                >
+                  {selectedIds.has(c.id) && <Check size={11} />}
+                </button>
+                <div className="min-w-0">
+                  <p className="font-medium text-zinc-900 dark:text-white">
+                    {c.legal_first_name || c.legal_last_name ? `${c.legal_first_name} ${c.legal_last_name}`.trim() : c.email || "Unnamed candidate"}
+                  </p>
+                  <p className="mt-0.5 line-clamp-1 text-sm text-zinc-500 dark:text-zinc-400">
+                    {c.semantic_summary || "No summary yet"}
+                  </p>
+                </div>
               </div>
               <div className="flex shrink-0 flex-col items-end gap-1 text-xs text-zinc-400">
                 <span>Submitted {new Date(c.date_submitted).toLocaleDateString()}</span>

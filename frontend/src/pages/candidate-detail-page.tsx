@@ -16,12 +16,15 @@ import {
   Mail,
   Phone,
   RefreshCw,
+  StickyNote,
+  Trash2,
 } from "lucide-react";
 import { api } from "../lib/api";
 import { useToastStore } from "../stores/toast-store";
 import { useCandidatesStore } from "../stores/candidates-store";
 import { Card } from "../components/ui/card";
 import { Button } from "../components/ui/button";
+import { Textarea } from "../components/ui/input";
 import { MatchBadge } from "../components/ui/match-badge";
 import { SourceBadges } from "../components/ui/source-badges";
 import { ProgressBar, useSimulatedProgress } from "../components/ui/progress-bar";
@@ -44,6 +47,8 @@ export function CandidateDetailPage() {
   const [sources, setSources] = useState<ResumeSourceInfo[]>([]);
   const [openSourceId, setOpenSourceId] = useState<string | null>(null);
   const [sourceText, setSourceText] = useState<Record<string, string>>({});
+  const [noteDraft, setNoteDraft] = useState("");
+  const [savingNote, setSavingNote] = useState(false);
   const [loading, setLoading] = useState(true);
   // Persisted in candidates-store (not local state) so "Check for updates"
   // survives navigating away and back, a refresh, or a logout/login rather
@@ -129,6 +134,30 @@ export function CandidateDetailPage() {
     if (!id) return;
     try {
       await api.downloadCandidateSourceFile(id, sourceId);
+    } catch (e) {
+      push(String(e), "error");
+    }
+  }
+
+  async function submitNote() {
+    if (!id || !noteDraft.trim()) return;
+    setSavingNote(true);
+    try {
+      const notes = await api.addCandidateNote(id, noteDraft.trim());
+      setCandidate((c) => (c ? { ...c, recruiter_notes: notes } : c));
+      setNoteDraft("");
+    } catch (e) {
+      push(String(e), "error");
+    } finally {
+      setSavingNote(false);
+    }
+  }
+
+  async function removeNote(noteId: string) {
+    if (!id) return;
+    try {
+      const notes = await api.deleteCandidateNote(id, noteId);
+      setCandidate((c) => (c ? { ...c, recruiter_notes: notes } : c));
     } catch (e) {
       push(String(e), "error");
     }
@@ -354,6 +383,49 @@ export function CandidateDetailPage() {
           </ul>
         </Card>
       )}
+
+      <Card className="mb-4">
+        <h2 className="mb-3 flex items-center gap-1.5 text-sm font-semibold text-zinc-700 dark:text-zinc-200">
+          <StickyNote size={14} /> Notes {candidate.recruiter_notes.length > 0 && `(${candidate.recruiter_notes.length})`}
+        </h2>
+        <p className="mb-2 text-xs text-zinc-400">
+          Your own notes on this person — separate from any one job's match, e.g. "why I passed" or "call back in Q2."
+        </p>
+        <div className="mb-3 flex items-start gap-2">
+          <Textarea
+            value={noteDraft}
+            onChange={(e) => setNoteDraft(e.target.value)}
+            placeholder="Add a note…"
+            rows={2}
+            className="flex-1"
+          />
+          <Button size="sm" loading={savingNote} disabled={!noteDraft.trim()} onClick={submitNote}>
+            Add
+          </Button>
+        </div>
+        {candidate.recruiter_notes.length > 0 && (
+          <ul className="space-y-2">
+            {candidate.recruiter_notes.map((n) => (
+              <li
+                key={n.id}
+                className="flex items-start justify-between gap-2 rounded-lg border border-zinc-100 p-2.5 text-sm dark:border-zinc-800"
+              >
+                <div className="min-w-0">
+                  <p className="whitespace-pre-wrap text-zinc-700 dark:text-zinc-200">{n.text}</p>
+                  <p className="mt-0.5 text-xs text-zinc-400">{new Date(n.created_at).toLocaleString()}</p>
+                </div>
+                <button
+                  onClick={() => removeNote(n.id)}
+                  className="shrink-0 rounded-md p-1 text-zinc-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950"
+                  aria-label="Delete note"
+                >
+                  <Trash2 size={13} />
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Card>
 
       {candidate.history.length > 0 && (
         <Card className="mb-4">

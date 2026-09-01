@@ -28,10 +28,14 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 // every other request (auth is a bearer token, not a cookie) — a resume
 // download or CSV export needs an authenticated fetch first, then a
 // client-side save from the resulting blob. Shared by both.
-async function downloadFile(path: string, fallbackFilename: string): Promise<void> {
+async function downloadFile(path: string, fallbackFilename: string, options?: RequestInit): Promise<void> {
   const token = getToken();
   const res = await fetch(`${BASE}${path}`, {
-    headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    ...options,
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(options?.body ? { "Content-Type": "application/json" } : {}),
+    },
   });
   if (res.status === 401) {
     clearToken();
@@ -157,6 +161,11 @@ export const api = {
     const suffix = qs.toString() ? `?${qs.toString()}` : "";
     return downloadFile(`/candidates/export${suffix}`, "candidates.csv");
   },
+  exportSelectedCandidates: (ids: string[]) =>
+    downloadFile("/candidates/export-selected", "candidates-selected.csv", {
+      method: "POST",
+      body: JSON.stringify({ ids }),
+    }),
   getCandidateFacets: (dataMode?: string) =>
     request<import("./types").CandidateFacets>(
       `/candidates/facets${dataMode ? `?data_mode=${dataMode}` : ""}`,
@@ -178,6 +187,13 @@ export const api = {
     ),
   downloadCandidateSourceFile: (id: string, sourceId: string) =>
     downloadFile(`/candidates/${id}/sources/${sourceId}/file`, "resume"),
+  addCandidateNote: (id: string, text: string) =>
+    request<import("./types").CandidateNote[]>(`/candidates/${id}/notes`, {
+      method: "POST",
+      body: JSON.stringify({ text }),
+    }),
+  deleteCandidateNote: (id: string, noteId: string) =>
+    request<import("./types").CandidateNote[]>(`/candidates/${id}/notes/${noteId}`, { method: "DELETE" }),
 
   runMatching: (jobId: string, topN: number, dataMode?: string, batchId?: string) =>
     request<import("./types").ScanJob>(

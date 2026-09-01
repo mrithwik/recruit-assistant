@@ -4,6 +4,7 @@ date-range filtering in Candidate Results (2.5) regardless of origin."""
 import csv
 import io
 import time
+import uuid
 from datetime import datetime
 
 from pathlib import Path
@@ -19,8 +20,11 @@ from app.models.enums import EmploymentStatus, WorkVisaStatus
 from app.models.schemas import (
     CandidateDetailOut,
     CandidateFacetsOut,
+    CandidateIdsIn,
     CandidateListOut,
     CandidateMatchDetail,
+    CandidateNoteCreate,
+    CandidateNoteOut,
     CandidateOut,
     DataModeCountsOut,
     MatchReasons,
@@ -90,6 +94,7 @@ def _to_out(candidate: Candidate, origins: list[str], email_link: str = "") -> C
         portfolio_url=candidate.portfolio_url,
         sources=distinct_origins,
         history=candidate.history,
+        recruiter_notes=candidate.recruiter_notes,
         email_link=email_link,
     )
 
@@ -153,6 +158,52 @@ def get_candidate_facets(
         )
 
 
+def _candidates_csv(candidates: list[Candidate], filename: str) -> StreamingResponse:
+    """Shared by /export (every candidate matching the current filters) and
+    /export-selected (a hand-picked subset from the All Candidates bulk
+    checkboxes) so the two can't drift on column layout."""
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(
+        ["Name", "Email", "Phone", "Employment status", "Work authorization", "Experience (years)", "Skills", "Education", "Date submitted", "LinkedIn", "GitHub", "Portfolio"]
+    )
+    for c in candidates:
+        writer.writerow(
+            [
+                f"{c.legal_first_name} {c.legal_last_name}".strip(),
+                c.email,
+                c.phone,
+                c.employment_status,
+                c.work_visa_status,
+                c.experience_years,
+                "; ".join(c.skills or []),
+                "; ".join(c.education or []),
+                c.date_submitted.isoformat() if c.date_submitted else "",
+                c.linkedin_url,
+                c.github_url,
+                c.portfolio_url,
+            ]
+        )
+    buffer.seek(0)
+    return StreamingResponse(
+        iter([buffer.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
+
+
+@router.post("/export-selected")
+def export_selected_candidates(payload: CandidateIdsIn, storage: BaseStorageBackend = Depends(get_storage)):
+    """CSV of exactly the candidates the recruiter checked on the All
+    Candidates bulk-select bar — a hand-picked subset, as opposed to
+    /export's "everything matching the current filters". POST (not GET)
+    since a selection can run to hundreds of ids, too many to fit safely in
+    a query string."""
+    with storage.session() as session:
+        candidates = list(session.execute(select(Candidate).where(Candidate.id.in_(payload.ids))).scalars())
+        return _candidates_csv(candidates, "candidates-selected.csv")
+
+
 @router.get("/export")
 def export_candidates(
     date_start: datetime | None = Query(None),
@@ -190,34 +241,7 @@ def export_candidates(
             data_mode=data_mode,
             needs_attention=needs_attention,
         )
-        buffer = io.StringIO()
-        writer = csv.writer(buffer)
-        writer.writerow(
-            ["Name", "Email", "Phone", "Employment status", "Work authorization", "Experience (years)", "Skills", "Education", "Date submitted", "LinkedIn", "GitHub", "Portfolio"]
-        )
-        for c in candidates:
-            writer.writerow(
-                [
-                    f"{c.legal_first_name} {c.legal_last_name}".strip(),
-                    c.email,
-                    c.phone,
-                    c.employment_status,
-                    c.work_visa_status,
-                    c.experience_years,
-                    "; ".join(c.skills or []),
-                    "; ".join(c.education or []),
-                    c.date_submitted.isoformat() if c.date_submitted else "",
-                    c.linkedin_url,
-                    c.github_url,
-                    c.portfolio_url,
-                ]
-            )
-        buffer.seek(0)
-        return StreamingResponse(
-            iter([buffer.getvalue()]),
-            media_type="text/csv",
-            headers={"Content-Disposition": "attachment; filename=candidates.csv"},
-        )
+        return _candidates_csv(candidates, "candidates.csv")
 
 
 @router.get("/data-mode-counts", response_model=DataModeCountsOut)
@@ -266,6 +290,35 @@ def get_candidate(candidate_id: str, storage: BaseStorageBackend = Depends(get_s
             for m, title in matches
         ]
         return CandidateDetailOut(**base.model_dump(), matches=match_details)
+
+
+@router.post("/{candidate_id}/notes", response_model=list[CandidateNoteOut])
+def add_candidate_note(candidate_id: str, payload: CandidateNoteCreate, storage: BaseStorageBackend = Depends(get_storage)):
+    """A recruiter's own free-text note on this person — independent of any
+    one job match (unlike judge_notes / per-flag notes, both scoped to a
+    Match). Newest first; see Candidate.recruiter_notes."""
+    text = payload.text.strip()
+    if not text:
+        raise HTTPException(400, "Note text cannot be empty")
+    with storage.session() as session:
+        candidate = session.get(Candidate, candidate_id)
+        if not candidate:
+            raise HTTPException(404, "Candidate not found")
+        note = {"id": str(uuid.uuid4()), "text": text, "created_at": datetime.utcnow().isoformat()}
+        candidate.recruiter_notes = [note, *candidate.recruiter_notes]
+        session.commit()
+        return candidate.recruiter_notes
+
+
+@router.delete("/{candidate_id}/notes/{note_id}", response_model=list[CandidateNoteOut])
+def delete_candidate_note(candidate_id: str, note_id: str, storage: BaseStorageBackend = Depends(get_storage)):
+    with storage.session() as session:
+        candidate = session.get(Candidate, candidate_id)
+        if not candidate:
+            raise HTTPException(404, "Candidate not found")
+        candidate.recruiter_notes = [n for n in candidate.recruiter_notes if n.get("id") != note_id]
+        session.commit()
+        return candidate.recruiter_notes
 
 
 @router.get("/{candidate_id}/sources", response_model=list[ResumeSourceOut])

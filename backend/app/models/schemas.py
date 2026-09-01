@@ -98,6 +98,20 @@ class CandidateProfile(BaseModel):
     portfolio_url: str = ""
 
 
+class CandidateIdsIn(BaseModel):
+    ids: list[str]
+
+
+class CandidateNoteOut(BaseModel):
+    id: str
+    text: str
+    created_at: datetime
+
+
+class CandidateNoteCreate(BaseModel):
+    text: str
+
+
 class CandidateOut(BaseModel):
     id: str
     legal_first_name: str
@@ -118,6 +132,7 @@ class CandidateOut(BaseModel):
     portfolio_url: str = ""
     sources: list[str] = Field(default_factory=list)  # origins this candidate was seen from
     history: list[dict] = Field(default_factory=list)  # dated timeline — see Candidate.history
+    recruiter_notes: list[CandidateNoteOut] = Field(default_factory=list)  # see Candidate.recruiter_notes
     # Deep link to the most recent source email with one on record — blank
     # if every source is folder-origin, a mock fixture, or predates the
     # email_link feature. See ResumeSource.email_link / email_ingestor.py.
