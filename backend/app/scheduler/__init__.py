@@ -68,6 +68,8 @@ async def _run_nightly_scan(storage: BaseStorageBackend, llm: LLMClient, setting
                     max_concurrent_embeddings=settings.max_concurrent_llm_calls,
                 )
                 source.last_run_at = datetime.utcnow()
+                if source.kind == "email_account" and account:
+                    account.last_scanned_at = source.last_run_at
                 origin = "email" if source.kind == "email_account" else "folder"
                 record_ingest_scan(storage, session, origin, f"auto-scan: {source.ref}", result)
                 session.commit()

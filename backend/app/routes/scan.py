@@ -13,6 +13,7 @@ racing two overlapping jobs — see ScanAlreadyRunningError."""
 
 import asyncio
 import uuid
+from datetime import datetime
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -201,7 +202,14 @@ async def scan_email_accounts(
                 for account_id in payload.account_ids:
                     if is_cancel_requested(job.id):
                         break
-                    account = session.get(EmailAccount, account_id) if not get_use_mock_email() else None
+                    # Looked up regardless of mock/real mode (matching the
+                    # scheduler's nightly job) — under mock, build_email_ingestor
+                    # never touches `account`, but the caller still needs it
+                    # to write last_scanned_at back below. The old
+                    # mock-mode-skips-the-lookup version was why a mock scan
+                    # of a real connected account (e.g. the dev-seeded
+                    # "demo@mock.local" row) never updated its record.
+                    account = session.get(EmailAccount, account_id)
                     if not get_use_mock_email() and not account:
                         combined.errors.append(f"{account_id}: account not found")
                         continue
@@ -258,6 +266,13 @@ async def scan_email_accounts(
                         on_progress=_on_progress,
                         on_should_cancel=lambda: is_cancel_requested(job.id),
                     )
+                    if account:
+                        # Tracked (SearchHistoryEntry/IngestScanHistoryEntry)
+                        # but never written back to the account record
+                        # itself — the Email Access page reads this field
+                        # directly and had no way to reflect a scan that
+                        # just happened.
+                        account.last_scanned_at = datetime.utcnow()
                     combined.resumes_found += result.resumes_found
                     combined.candidates_created += result.candidates_created
                     combined.candidates_updated += result.candidates_updated
@@ -332,7 +347,10 @@ async def scan_all(
                 for account_id in account_ids:
                     if is_cancel_requested(job.id):
                         break
-                    account = session.get(EmailAccount, account_id) if not get_use_mock_email() else None
+                    # See scan_email_accounts above — looked up regardless
+                    # of mock/real mode so last_scanned_at still gets
+                    # written for a mock scan of a real account row.
+                    account = session.get(EmailAccount, account_id)
                     if not get_use_mock_email() and not account:
                         combined.errors.append(f"{account_id}: account not found")
                         continue
@@ -352,6 +370,8 @@ async def scan_all(
                         on_progress=lambda r: update_progress(job.id, r),
                         on_should_cancel=lambda: is_cancel_requested(job.id),
                     )
+                    if account:
+                        account.last_scanned_at = datetime.utcnow()
                     combined.resumes_found += result.resumes_found
                     combined.candidates_created += result.candidates_created
                     combined.candidates_updated += result.candidates_updated
