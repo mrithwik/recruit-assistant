@@ -366,24 +366,32 @@ export function AllCandidatesPage() {
         />
       )}
 
-      {candidates.length > 0 && (
+      {/* Gated on selectedIds too, not just candidates.length — a selection
+          made before narrowing the search/filters to zero results used to
+          make the whole bar (count, Export, Clear) disappear along with
+          "Select all on this page," even though the selection itself was
+          untouched underneath. "Select all on this page" alone still needs
+          candidates on the page to mean anything. */}
+      {(candidates.length > 0 || selectedIds.size > 0) && (
         <div className="mb-2 flex items-center gap-4 text-xs text-zinc-500 dark:text-zinc-400">
-          <button
-            type="button"
-            onClick={toggleSelectAllOnPage}
-            className="flex items-center gap-1.5 font-medium hover:text-zinc-700 dark:hover:text-zinc-300"
-          >
-            <span
-              className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border ${
-                allOnPageSelected
-                  ? "border-indigo-600 bg-indigo-600 text-white"
-                  : "border-zinc-300 dark:border-zinc-600"
-              }`}
+          {candidates.length > 0 && (
+            <button
+              type="button"
+              onClick={toggleSelectAllOnPage}
+              className="flex items-center gap-1.5 font-medium hover:text-zinc-700 dark:hover:text-zinc-300"
             >
-              {allOnPageSelected && <Check size={11} />}
-            </span>
-            Select all on this page
-          </button>
+              <span
+                className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border ${
+                  allOnPageSelected
+                    ? "border-indigo-600 bg-indigo-600 text-white"
+                    : "border-zinc-300 dark:border-zinc-600"
+                }`}
+              >
+                {allOnPageSelected && <Check size={11} />}
+              </span>
+              Select all on this page
+            </button>
+          )}
           {selectedIds.size > 0 && (
             <>
               <span>{selectedIds.size} selected</span>

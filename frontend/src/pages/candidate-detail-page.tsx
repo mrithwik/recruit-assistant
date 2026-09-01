@@ -153,11 +153,28 @@ export function CandidateDetailPage() {
     }
   }
 
-  async function removeNote(noteId: string) {
+  async function removeNote(noteId: string, text: string) {
     if (!id) return;
     try {
       const notes = await api.deleteCandidateNote(id, noteId);
       setCandidate((c) => (c ? { ...c, recruiter_notes: notes } : c));
+      // No confirm dialog first — a short note is a one-click retype if
+      // this was a mistake, so an Undo toast (same pattern job deletion
+      // uses) covers it without a blocking prompt. Undo re-adds the text
+      // as a new note (new id/timestamp) rather than a true restore —
+      // there's no server-side "undelete," and that distinction doesn't
+      // matter for free-text notes the way it would for a whole job.
+      push("Note deleted", "success", {
+        action: {
+          label: "Undo",
+          onClick: () => {
+            api
+              .addCandidateNote(id, text)
+              .then((restored) => setCandidate((c) => (c ? { ...c, recruiter_notes: restored } : c)))
+              .catch((e) => push(String(e), "error"));
+          },
+        },
+      });
     } catch (e) {
       push(String(e), "error");
     }
@@ -415,7 +432,7 @@ export function CandidateDetailPage() {
                   <p className="mt-0.5 text-xs text-zinc-400">{new Date(n.created_at).toLocaleString()}</p>
                 </div>
                 <button
-                  onClick={() => removeNote(n.id)}
+                  onClick={() => removeNote(n.id, n.text)}
                   className="shrink-0 rounded-md p-1 text-zinc-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950"
                   aria-label="Delete note"
                 >
