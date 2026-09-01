@@ -133,3 +133,77 @@ def test_delete_candidate_leaves_other_candidates_mirror_files_untouched(client,
     storage = get_storage()
     with storage.session() as session:
         assert session.get(Candidate, bystander_id) is not None
+
+
+def test_delete_candidate_with_two_same_day_submissions_removes_both_resume_files(client, tmp_path):
+    """Regression for a QA finding: two submissions on the same day for the
+    same candidate land in the same mirror directory (write_mirror keys the
+    directory on candidate + date, not per-submission) — if they have
+    different extensions, that directory holds two resume files
+    (resume.pdf, resume.docx) sharing one meta.json/profile_summary.md,
+    since the second write overwrote those. A per-source deletion pass that
+    deletes meta.json while handling the first source, then re-reads it to
+    safety-check the second source pointing at the same directory, finds it
+    already gone and defensively skips — silently orphaning the second
+    resume file (real PII) in an untracked directory. Confirms both files
+    are gone and the directory itself is removed."""
+    from app.dependencies import get_storage
+    from app.models.db import Candidate, ResumeSource
+
+    storage = get_storage()
+    candidate_id = str(uuid.uuid4())
+    from app.scanning.mirror_writer import slugify
+
+    candidate_slug = slugify(f"Two-Submissions-{candidate_id[:8]}")
+    target_dir = tmp_path / "candidates" / "unassigned" / "2026-01-01" / candidate_slug
+    target_dir.mkdir(parents=True)
+    pdf_path = target_dir / "resume.pdf"
+    docx_path = target_dir / "resume.docx"
+    pdf_path.write_bytes(b"%PDF-fake initial application")
+    docx_path.write_bytes(b"fake docx follow-up")
+    # Only one meta.json/profile_summary.md exists on disk — the second
+    # write_mirror call for this candidate+date overwrote them, exactly as
+    # the real ingest path does.
+    (target_dir / "profile_summary.md").write_text("Summary (latest)")
+    (target_dir / "meta.json").write_text(json.dumps({"candidate_id": candidate_id, "source_ref": "followup"}))
+
+    with storage.session() as session:
+        candidate = Candidate(
+            id=candidate_id,
+            identity_fingerprint="email:two-submissions@example.com",
+            legal_first_name="Two",
+            legal_last_name="Submissions",
+            email="two-submissions@example.com",
+            date_submitted=datetime.utcnow(),
+        )
+        session.add(candidate)
+        session.add_all(
+            [
+                ResumeSource(
+                    id=str(uuid.uuid4()),
+                    candidate_id=candidate_id,
+                    origin="email",
+                    source_ref="initial",
+                    content_hash="hash-1",
+                    file_path=str(pdf_path),
+                    date_submitted=datetime.utcnow(),
+                ),
+                ResumeSource(
+                    id=str(uuid.uuid4()),
+                    candidate_id=candidate_id,
+                    origin="email",
+                    source_ref="followup",
+                    content_hash="hash-2",
+                    file_path=str(docx_path),
+                    date_submitted=datetime.utcnow(),
+                ),
+            ]
+        )
+        session.commit()
+
+    resp = client.delete(f"/api/v1/candidates/{candidate_id}")
+    assert resp.status_code == 204
+
+    assert not pdf_path.exists()
+    assert not docx_path.exists()
+    assert not target_dir.exists()

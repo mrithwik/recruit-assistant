@@ -63,16 +63,30 @@ def write_mirror(
 
 
 def delete_candidate_mirror(candidate_id: str, sources: list["ResumeSource"]) -> None:
-    """Removes the on-disk mirror (resume file, summary, meta) for every
+    """Removes the on-disk mirror (resume file(s), summary, meta) for every
     ResumeSource a candidate has — the counterpart to write_mirror, needed
-    for a real per-candidate PII delete (see routes/candidates.py). Deletes
-    only the three files write_mirror is known to create, by name, and only
-    after meta.json confirms the directory belongs to this candidate — never
-    an rmtree, so an unexpected file in the directory is left alone rather
-    than silently swept up."""
+    for a real per-candidate PII delete (see routes/candidates.py).
+
+    Two submissions on the same day land in the *same* target_dir (write_mirror
+    keys the directory on candidate + date, not per-submission) — if they have
+    different extensions, that directory holds two resume files
+    (resume.pdf, resume.docx) sharing one meta.json/profile_summary.md, since
+    each write overwrites those two. Sources are grouped by target_dir first,
+    so every resume file in a shared directory is deleted in the same pass
+    that reads and checks meta.json — checking meta.json is safe here because
+    it's read once, before anything in that directory is deleted (an earlier,
+    per-source version deleted meta.json while handling the first source
+    sharing a directory, then had nothing left to check when it reached the
+    second source pointing at the same directory, and defensively skipped it
+    — silently orphaning that file; see QA finding). Deletes only file names
+    write_mirror is known to create — never an rmtree, so an unexpected file
+    in the directory is left alone rather than silently swept up."""
+    by_dir: dict[Path, list[Path]] = {}
     for source in sources:
         resume_path = Path(source.file_path)
-        target_dir = resume_path.parent
+        by_dir.setdefault(resume_path.parent, []).append(resume_path)
+
+    for target_dir, resume_paths in by_dir.items():
         meta_path = target_dir / "meta.json"
         try:
             meta = json.loads(meta_path.read_text())
@@ -80,8 +94,10 @@ def delete_candidate_mirror(candidate_id: str, sources: list["ResumeSource"]) ->
             continue
         if meta.get("candidate_id") != candidate_id:
             continue
-        for name in (resume_path.name, "profile_summary.md", "meta.json"):
-            (target_dir / name).unlink(missing_ok=True)
+        for resume_path in resume_paths:
+            resume_path.unlink(missing_ok=True)
+        (target_dir / "profile_summary.md").unlink(missing_ok=True)
+        meta_path.unlink(missing_ok=True)
         try:
             target_dir.rmdir()
         except OSError:
