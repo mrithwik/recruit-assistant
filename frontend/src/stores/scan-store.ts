@@ -77,7 +77,7 @@ interface ScanState {
   fetchScheduledSources: () => Promise<void>;
   setSourceAutoScan: (kind: "folder" | "email_account", ref: string, enabled: boolean, includeSubfolders?: boolean) => Promise<void>;
   fetchMockMode: () => Promise<void>;
-  setUseMockLlm: (value: boolean) => Promise<void>;
+  setUseMockLlm: (value: boolean, consentAck?: boolean) => Promise<void>;
   setUseMockEmail: (value: boolean) => Promise<void>;
 }
 
@@ -219,8 +219,8 @@ export const useScanStore = create<ScanState>()(
           const mockMode = await api.getMockMode();
           set({ mockMode });
         },
-        setUseMockLlm: async (value) => {
-          const mockMode = await api.updateMockMode({ use_mock_llm: value });
+        setUseMockLlm: async (value, consentAck) => {
+          const mockMode = await api.updateMockMode({ use_mock_llm: value, consent_ack: consentAck });
           set({ mockMode });
         },
         setUseMockEmail: async (value) => {

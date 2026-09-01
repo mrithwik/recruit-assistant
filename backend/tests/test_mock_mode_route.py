@@ -1,8 +1,10 @@
 """GET/PATCH /api/v1/settings/mock-mode — the live runtime toggle that lets
 the UI switch email/LLM mock vs. real without restarting the backend (see
-app/runtime_settings.py). Covers the guardrail: real LLM mode must be
-refused when no provider key is configured, rather than silently accepted
-and failing mid-scan."""
+app/runtime_settings.py). Covers two guardrails: real LLM mode must be
+refused when no provider key is configured, and — independently — refused
+without a one-time consent acknowledgment (resume text/job descriptions
+leaving the machine), persisted on User.real_llm_consent_given_at so it's
+never asked again once given."""
 
 import pytest
 from fastapi.testclient import TestClient
@@ -39,6 +41,7 @@ def test_get_reports_current_mock_state(client):
     assert body["use_mock_email"] is True
     assert body["real_llm_available"] is False  # no key configured in this fixture
     assert body["expose_toggle"] is True
+    assert body["real_llm_consent_given"] is False
 
 
 def test_patch_toggles_email_mock_off(client):
@@ -90,9 +93,65 @@ def test_patch_allows_real_llm_mode_when_a_key_was_configured_at_startup(tmp_pat
         resp = c.post("/api/v1/auth/register", json={"email": "recruiter@example.com", "password": "correct-horse-battery"})
         c.headers.update({"Authorization": f"Bearer {resp.json()['token']}"})
 
-        patch_resp = c.patch("/api/v1/settings/mock-mode", json={"use_mock_llm": False})
+        patch_resp = c.patch("/api/v1/settings/mock-mode", json={"use_mock_llm": False, "consent_ack": True})
         assert patch_resp.status_code == 200
         assert patch_resp.json()["use_mock_llm"] is False
+    get_settings.cache_clear()
+
+
+def test_patch_refuses_real_llm_mode_without_consent_even_with_a_key(tmp_path, monkeypatch):
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("SQLITE_PATH", str(tmp_path / "test.db"))
+    monkeypatch.setenv("USE_MOCK_LLM", "true")
+    monkeypatch.setenv("USE_MOCK_EMAIL", "true")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-fake-test-key")
+
+    from app.dependencies import get_settings
+
+    get_settings.cache_clear()
+    from app.main import app
+
+    with TestClient(app) as c:
+        resp = c.post("/api/v1/auth/register", json={"email": "recruiter@example.com", "password": "correct-horse-battery"})
+        c.headers.update({"Authorization": f"Bearer {resp.json()['token']}"})
+
+        patch_resp = c.patch("/api/v1/settings/mock-mode", json={"use_mock_llm": False})
+        assert patch_resp.status_code == 428
+        assert "consent" in patch_resp.json()["detail"].lower()
+
+        # Rejected — still mock afterward, consent not silently recorded.
+        state = c.get("/api/v1/settings/mock-mode").json()
+        assert state["use_mock_llm"] is True
+        assert state["real_llm_consent_given"] is False
+    get_settings.cache_clear()
+
+
+def test_consent_once_given_is_never_asked_again(tmp_path, monkeypatch):
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("SQLITE_PATH", str(tmp_path / "test.db"))
+    monkeypatch.setenv("USE_MOCK_LLM", "true")
+    monkeypatch.setenv("USE_MOCK_EMAIL", "true")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-fake-test-key")
+
+    from app.dependencies import get_settings
+
+    get_settings.cache_clear()
+    from app.main import app
+
+    with TestClient(app) as c:
+        resp = c.post("/api/v1/auth/register", json={"email": "recruiter@example.com", "password": "correct-horse-battery"})
+        c.headers.update({"Authorization": f"Bearer {resp.json()['token']}"})
+
+        first = c.patch("/api/v1/settings/mock-mode", json={"use_mock_llm": False, "consent_ack": True})
+        assert first.status_code == 200
+        assert first.json()["real_llm_consent_given"] is True
+
+        # Toggle back to mock, then back to real — no consent_ack needed
+        # the second time, since it's a one-time-ever acknowledgment.
+        c.patch("/api/v1/settings/mock-mode", json={"use_mock_llm": True})
+        second = c.patch("/api/v1/settings/mock-mode", json={"use_mock_llm": False})
+        assert second.status_code == 200
+        assert second.json()["use_mock_llm"] is False
     get_settings.cache_clear()
 
 

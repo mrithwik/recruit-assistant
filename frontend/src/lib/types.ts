@@ -345,4 +345,5 @@ export interface MockMode {
   use_mock_email: boolean;
   real_llm_available: boolean;
   expose_toggle: boolean;
+  real_llm_consent_given: boolean;
 }

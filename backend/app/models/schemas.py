@@ -556,8 +556,10 @@ class MockModeOut(BaseModel):
     use_mock_email: bool
     real_llm_available: bool  # whether an OpenRouter/OpenAI key is configured at all
     expose_toggle: bool  # Settings.expose_mock_mode_toggle — UI hides the control if false
+    real_llm_consent_given: bool  # one-time ack that resume text leaves the machine in real mode
 
 
 class MockModeUpdateRequest(BaseModel):
     use_mock_llm: bool | None = None
     use_mock_email: bool | None = None
+    consent_ack: bool = False  # required the first time use_mock_llm is set to False

@@ -16,6 +16,7 @@ from sqlalchemy import func, select
 from app.data_classification import candidate_id_condition
 from app.dependencies import get_storage
 from app.models.db import Candidate, Job, Match, ResumeSource
+from app.scanning.mirror_writer import delete_candidate_mirror
 from app.models.enums import EmploymentStatus, WorkVisaStatus
 from app.models.schemas import (
     CandidateDetailOut,
@@ -291,6 +292,26 @@ def get_candidate(candidate_id: str, storage: BaseStorageBackend = Depends(get_s
             for m, title in matches
         ]
         return CandidateDetailOut(**base.model_dump(), matches=match_details)
+
+
+@router.delete("/{candidate_id}", status_code=204)
+def delete_candidate(candidate_id: str, storage: BaseStorageBackend = Depends(get_storage)):
+    """Real, irreversible per-candidate PII delete — the proportionate
+    counterpart to dev_tools.clear_data's wipe-everything danger zone, for
+    honoring a genuine right-to-erasure request without destroying every
+    other candidate. Removes the on-disk mirror (resume, summary, meta)
+    before the DB row, then deletes the Candidate itself — Match and
+    ResumeSource rows cascade automatically via the ORM relationships'
+    cascade="all, delete-orphan" (see models/db.py), so no manual per-table
+    deletes are needed here the way clear_data requires."""
+    with storage.session() as session:
+        candidate = session.get(Candidate, candidate_id)
+        if not candidate:
+            raise HTTPException(404, "Candidate not found")
+        sources = list(session.execute(select(ResumeSource).where(ResumeSource.candidate_id == candidate_id)).scalars())
+        delete_candidate_mirror(candidate_id, sources)
+        session.delete(candidate)
+        session.commit()
 
 
 @router.post("/{candidate_id}/notes", response_model=list[CandidateNoteOut])

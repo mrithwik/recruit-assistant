@@ -16,6 +16,7 @@ import { TimingBadge } from "../components/ui/timing-badge";
 import { SampleDataGenerator } from "../components/scan/sample-data-generator";
 import { DangerZone } from "../components/scan/danger-zone";
 import { MaintenanceTasks } from "../components/scan/maintenance-tasks";
+import { LlmConsentModal } from "../components/scan/llm-consent-modal";
 
 // Redesigned per feedback that the page read as one undifferentiated block —
 // this lays it out as three explicit numbered steps (pick a source, set a
@@ -83,11 +84,31 @@ export function ScanPage() {
     resumeActiveScanIfAny().catch(() => {});
   }, []);
 
+  const [showLlmConsent, setShowLlmConsent] = useState(false);
+
   async function toggleMockLlm(next: boolean) {
+    // Turning real mode on for the first time ever needs an explicit
+    // acknowledgment before resume text/job descriptions leave the machine
+    // (see llm-consent-modal.tsx) — once given, it's never asked again, so
+    // this only intercepts when consent isn't already on record.
+    if (next === false && mockMode && !mockMode.real_llm_consent_given) {
+      setShowLlmConsent(true);
+      return;
+    }
     try {
       await setUseMockLlm(next);
     } catch (e) {
       push(String(e), "error");
+    }
+  }
+
+  async function confirmLlmConsent() {
+    try {
+      await setUseMockLlm(false, true);
+    } catch (e) {
+      push(String(e), "error");
+    } finally {
+      setShowLlmConsent(false);
     }
   }
 
@@ -386,6 +407,10 @@ export function ScanPage() {
         <MaintenanceTasks />
         <DangerZone />
       </div>
+
+      {showLlmConsent && (
+        <LlmConsentModal onConfirm={confirmLlmConsent} onClose={() => setShowLlmConsent(false)} />
+      )}
     </div>
   );
 }

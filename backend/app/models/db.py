@@ -34,6 +34,12 @@ class User(Base):
     name: Mapped[str] = mapped_column(String, default="")
     password_hash: Mapped[str] = mapped_column(String)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+    # One-time acknowledgment that real-LLM mode sends resume text and job
+    # descriptions to a third-party API — see routes/mock_mode.py. Persisted
+    # here (not runtime_settings.py, which is deliberately in-memory-only)
+    # since re-asking on every restart would be user-hostile for something
+    # that only needs saying once.
+    real_llm_consent_given_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
 
 
 class Job(Base):

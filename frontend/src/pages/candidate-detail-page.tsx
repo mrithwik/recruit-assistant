@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   AlertCircle,
+  AlertTriangle,
   ArrowLeft,
   Briefcase,
   Clock,
@@ -51,6 +52,8 @@ export function CandidateDetailPage() {
   const [noteDraft, setNoteDraft] = useState("");
   const [savingNote, setSavingNote] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [deleteConfirmText, setDeleteConfirmText] = useState("");
+  const [deleting, setDeleting] = useState(false);
   // Persisted in candidates-store (not local state) so "Check for updates"
   // survives navigating away and back, a refresh, or a logout/login rather
   // than resetting the moment this page unmounts.
@@ -178,6 +181,19 @@ export function CandidateDetailPage() {
       });
     } catch (e) {
       push(String(e), "error");
+    }
+  }
+
+  async function handleDeleteCandidate() {
+    if (!id) return;
+    setDeleting(true);
+    try {
+      await api.deleteCandidate(id);
+      push(`${name} and all associated data deleted.`, "success");
+      navigate("/app/candidates");
+    } catch (e) {
+      push(String(e), "error");
+      setDeleting(false);
     }
   }
 
@@ -524,6 +540,34 @@ export function CandidateDetailPage() {
           </ul>
         </Card>
       )}
+
+      <div className="mt-6 rounded-lg border border-dashed border-red-200 bg-red-50/30 p-3 dark:border-red-900 dark:bg-red-500/5">
+        <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-red-700 dark:text-red-400">
+          <AlertTriangle size={12} /> Danger zone
+        </div>
+        <p className="mb-3 mt-3 text-xs text-zinc-500 dark:text-zinc-400">
+          Permanently deletes {name}'s profile, resume file(s), and every match against every job.
+          This cannot be undone.
+        </p>
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            value={deleteConfirmText}
+            onChange={(e) => setDeleteConfirmText(e.target.value)}
+            placeholder='Type "DELETE" to confirm'
+            className="rounded-lg border border-red-200 bg-white px-2.5 py-1.5 text-xs text-zinc-700 focus:border-red-400 focus:outline-none dark:border-red-900 dark:bg-zinc-900 dark:text-zinc-200"
+          />
+          <Button
+            variant="danger"
+            size="sm"
+            icon={<Trash2 size={13} />}
+            loading={deleting}
+            disabled={deleteConfirmText !== "DELETE"}
+            onClick={handleDeleteCandidate}
+          >
+            Delete candidate
+          </Button>
+        </div>
+      </div>
     </div>
   );
 }

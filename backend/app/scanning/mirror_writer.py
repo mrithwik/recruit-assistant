@@ -11,8 +11,12 @@ import json
 import re
 from datetime import datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from app.models.schemas import CandidateProfile
+
+if TYPE_CHECKING:
+    from app.models.db import ResumeSource
 
 
 def slugify(text: str) -> str:
@@ -56,3 +60,29 @@ def write_mirror(
         )
     )
     return str(resume_path)
+
+
+def delete_candidate_mirror(candidate_id: str, sources: list["ResumeSource"]) -> None:
+    """Removes the on-disk mirror (resume file, summary, meta) for every
+    ResumeSource a candidate has — the counterpart to write_mirror, needed
+    for a real per-candidate PII delete (see routes/candidates.py). Deletes
+    only the three files write_mirror is known to create, by name, and only
+    after meta.json confirms the directory belongs to this candidate — never
+    an rmtree, so an unexpected file in the directory is left alone rather
+    than silently swept up."""
+    for source in sources:
+        resume_path = Path(source.file_path)
+        target_dir = resume_path.parent
+        meta_path = target_dir / "meta.json"
+        try:
+            meta = json.loads(meta_path.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        if meta.get("candidate_id") != candidate_id:
+            continue
+        for name in (resume_path.name, "profile_summary.md", "meta.json"):
+            (target_dir / name).unlink(missing_ok=True)
+        try:
+            target_dir.rmdir()
+        except OSError:
+            pass  # not empty — something unexpected is in there, leave it

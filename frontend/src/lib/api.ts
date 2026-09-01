@@ -146,7 +146,7 @@ export const api = {
     request<import("./types").ScanJob>(`/maintenance/tasks/${taskId}/run`, { method: "POST" }),
 
   getMockMode: () => request<import("./types").MockMode>("/settings/mock-mode"),
-  updateMockMode: (payload: { use_mock_llm?: boolean; use_mock_email?: boolean }) =>
+  updateMockMode: (payload: { use_mock_llm?: boolean; use_mock_email?: boolean; consent_ack?: boolean }) =>
     request<import("./types").MockMode>("/settings/mock-mode", { method: "PATCH", body: JSON.stringify(payload) }),
 
   listCandidates: (params?: CandidateFilterParams & { limit?: number; offset?: number }) => {
@@ -194,6 +194,7 @@ export const api = {
     }),
   deleteCandidateNote: (id: string, noteId: string) =>
     request<import("./types").CandidateNote[]>(`/candidates/${id}/notes/${noteId}`, { method: "DELETE" }),
+  deleteCandidate: (id: string) => request<void>(`/candidates/${id}`, { method: "DELETE" }),
 
   runMatching: (jobId: string, topN: number, dataMode?: string, batchId?: string) =>
     request<import("./types").ScanJob>(
