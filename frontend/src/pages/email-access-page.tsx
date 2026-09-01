@@ -93,7 +93,8 @@ export function EmailAccessPage() {
                   <div>
                     <p className="font-medium text-zinc-900 dark:text-white">{a.email_address}</p>
                     <p className="text-zinc-500 dark:text-zinc-400">
-                      {a.provider} · read-only · last scanned {a.last_scanned_at ?? "never"}
+                      {a.provider} · read-only · last scanned{" "}
+                      {a.last_scanned_at ? new Date(a.last_scanned_at).toLocaleString() : "never"}
                     </p>
                   </div>
                 </div>
