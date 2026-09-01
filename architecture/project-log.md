@@ -1123,6 +1123,104 @@ seeded via the app's own sample-data generator and a real matching run, never ag
 regression test was added); the real instance's health and `.env` confirmed unchanged
 throughout.
 
+## 38. Sample-data session tagging — generate, list, and delete by batch
+
+Requested directly from the README (`README.md:98`): sample data had no concept of "this
+batch vs. that batch" — regenerating repeatedly (testing at different volumes, after a code
+change) piled everyone into one undifferentiated pool, deletable only wholesale via the
+Danger Zone's "CLEAR". Confirmed with the user upfront (`AskUserQuestion`) how to treat
+already-generated data from before this feature existed: bucket it as one deletable
+"Unlabeled (before session tracking)" pseudo-session rather than leaving it invisible to the
+new UI.
+
+**Tagging mechanism, chosen to need zero ingestor changes.** Every file
+`sample_data_generator.py` writes is prefixed with its generation's session id
+(`sess-<timestamp>-<hex>__<original-name>`, `app/dev_tools/session_tagging.py`) — both
+FolderIngestor (reads bare filenames off disk) and MockEmailIngestor (reads a manifest
+entry's `attachment_file`, itself the same generated filename) already carry that prefix
+through to `IngestedResume.filename` with no code changes on either side.
+`ingest_service.py`'s single `build_resume_source()` call site extracts it back out and
+stamps a new nullable `ResumeSource.generation_session_id` column (auto-migrated, same as
+every prior column addition — see `_add_missing_columns`). Real/manually-added data is
+simply never tagged, so `generation_session_id` staying null is itself meaningful, not a gap
+to fill.
+
+**Generation is now additive, not overwriting.** `emails_manifest.json` is read and merged
+rather than replaced on each generate call — a `sessions` array of per-run summaries
+(id, label, generated_at, seed, counts) alongside the existing flat `emails` array. This is
+also what makes every session's filenames collision-free even at the same `--seed`
+(previously identical filenames from a same-seed regenerate would silently overwrite the
+prior run's files on disk) — a second, unplanned fix riding along with the tagging work,
+directly addressing the "regenerate silently swapped fixtures under the running dev server"
+risk flagged during an earlier QA pass (section 34).
+
+**New endpoints:** `GET /dev-tools/sample-sessions` (manifest sessions merged with live DB
+scan counts per session, plus the legacy bucket sized via the existing
+`is_mock_source_condition()` heuristic) and `DELETE /dev-tools/sample-sessions/{id}`. Deletion
+reuses the exact per-candidate delete pattern from ADR-012 (mirror files + cascaded rows, real
+and irreversible) — but a candidate can legitimately have sources from *two* sessions (the
+same deterministic person regenerated under the same default seed twice), so a candidate is
+only fully deleted when 100% of its sources belong to the target session; otherwise it's
+**trimmed** (just that session's sources/files removed, candidate kept). This mixed-ownership
+path was exercised for real during live verification, not just in the regression test — five
+generations at the default seed left most candidates shared across sessions, and deleting one
+session correctly trimmed 12 shared candidates rather than deleting them outright. Session
+deletion also prunes not-yet-scanned raw files and the manifest entry, so a deleted session
+can't be accidentally re-scanned back into existence.
+
+Frontend: new `SampleSessions` panel (`components/scan/sample-sessions.tsx`) on Scan Sources,
+between the generator and the Danger Zone, refetching after both a new generation and a
+completed scan (the latter needed its own fix — the panel initially only refreshed on
+generate, so a session's "scanned" status went stale until the next generate click).
+
+Verified against a fully isolated instance (port 8123/5183, `/tmp/verify_sessions`, never the
+real `:8000`/`:5173` pair) — the complete generate → scan → list → delete loop was driven live
+end-to-end through curl and a headless-browser Playwright script, not just the automated
+`test_sample_sessions.py` suite. 169 backend tests passing (unchanged pre-existing failures in
+`test_oauth_status_route.py`/`test_scan_all_route.py` traced to this machine's real `.env`
+leaking into those specific tests — confirmed present on `main` before this work too, not a
+regression).
+
+**Found, not fixed (separate, pre-existing bug):** live verification also surfaced that the
+Real/Mock data-mode classification (`data_classification.is_mock_source_condition`) undercounts
+mock data for folder-origin resumes — it checks `ResumeSource.file_path` for a `sample_data`
+segment, but `file_path` is the *post-mirror* copy path (`data/candidates/...`), which never
+contains it; the original path that does is only preserved in `source_ref`, which the check
+doesn't look at. Confirmed live: 78 synthetic folder-scanned candidates all showed under
+"Real" in the header toggle. Unrelated to this feature (no code touched here affects it) and
+out of scope for this batch — flagged for a future fix, not patched silently.
+
+## 39. QA on session tagging — two real bugs, both live-reproduced and fixed
+
+An independent QA pass on section 38's work verified the additive-manifest and
+`generation_session_id`-propagation claims directly (including checking the schema migration
+against a genuinely pre-change database, not just a fresh one — the exact gap that broke
+`Candidate.embedding` before), then found two real bugs the new tests hadn't caught:
+
+**Trimming orphaned a surviving session's file.** `write_mirror` keys its target directory on
+candidate + date, not per-submission — regenerating the same deterministic person (same seed)
+on the same day overwrites the earlier session's `resume.<ext>`/`meta.json`/
+`profile_summary.md` in place, so two `ResumeSource` rows from *different* sessions can end up
+pointing at the exact same physical file. The trim path was calling the ordinary
+`delete_candidate_mirror` with only the session-being-deleted's sources, which unconditionally
+wipes every file in that source's directory — taking the surviving session's still-referenced
+file down with it (`GET /candidates/{id}/resume` 404'd afterward, even though the candidate
+itself survived). Fixed with a new `delete_candidate_mirror_partial()`
+(`scanning/mirror_writer.py`) that only deletes a resume file if no surviving source still
+points at that exact path, and only touches `meta.json`/`profile_summary.md`/the directory
+itself if no surviving source lives in that directory at all. Regression test simulates the
+same-day-same-extension collision directly (two `ResumeSource` rows sharing one `file_path`)
+and asserts the survivor's file, `meta.json`, and summary are all still there after the delete.
+
+**Deleting a never-scanned session 404'd.** `list_sample_sessions`'s own docstring already
+said an unscanned batch "can still be found and deleted," but `delete_sample_session` queried
+`ResumeSource` first and 404'd immediately when that came back empty — never reaching the
+file-cleanup path at all. Reordered: the DB pass and the on-disk cleanup pass both always run,
+and the 404 only fires if *neither* found anything to remove.
+
+Both fixed and reproduced clean afterward (live curl + the new regression tests); 171 backend
+tests passing (169 + 2 new), same 3 pre-existing unrelated failures as section 38.
+
 ## Cross-references
 
 - [Design Decisions](design-decisions.md) — the ADRs behind each choice above

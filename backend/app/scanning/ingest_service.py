@@ -21,6 +21,7 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.dev_tools.session_tagging import extract_session_id
 from app.matching.concurrency import bounded_gather
 from app.matching.llm_client import LLMClient
 from app.matching.matcher import summarize_candidate
@@ -201,6 +202,7 @@ async def run_scan(
                 date_submitted=ingested.date_submitted,
                 additional_attachments=ingested.additional_attachments,
                 email_link=ingested.email_link,
+                generation_session_id=extract_session_id(ingested.filename),
             )
             session.add(source)
             seen_sources.add((file_hash, ingested.source_ref))

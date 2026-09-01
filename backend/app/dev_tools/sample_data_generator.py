@@ -35,6 +35,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from app.dev_tools.session_tagging import new_session_id, tag_filename
+
 try:
     from docx import Document
 except ImportError:  # pragma: no cover - docx is a project dependency already
@@ -440,14 +442,21 @@ class ManifestEntry:
     persona: str
     completeness: str
     thread_of: str | None = None
+    session_id: str = ""
 
 
 def generate(
-    out_dir: Path, seed: int, initial_count: int, followup_count: int, upskill_count: int = 0
+    out_dir: Path,
+    seed: int,
+    initial_count: int,
+    followup_count: int,
+    upskill_count: int = 0,
+    label: str | None = None,
 ) -> dict:
     rng = random.Random(seed)
     random.seed(seed)  # render_* helpers use the module-level `random` for brevity
     now = datetime.now()
+    session_id = new_session_id(now)
 
     resumes_dir = out_dir / "resumes"
     attachments_dir = out_dir / "attachments"  # flat copy for the email manifest path
@@ -467,7 +476,7 @@ def generate(
         item_id = f"app-{i:05d}-{slugify(c.first_name + c.last_name)}"
         use_docx = rng.random() < 0.3 and Document is not None
         ext = "docx" if use_docx else "txt"
-        filename = f"{item_id}.{ext}"
+        filename = tag_filename(session_id, f"{item_id}.{ext}")
 
         bucket_dir = resumes_dir / bucket
         bucket_dir.mkdir(parents=True, exist_ok=True)
@@ -515,7 +524,7 @@ def generate(
 
         body = render_followup_body(orig_c, orig_c.submitted_at)
         item_id = f"followup-{i:05d}-{slugify(orig_c.first_name + orig_c.last_name)}"
-        filename = f"{item_id}.txt"
+        filename = tag_filename(session_id, f"{item_id}.txt")
         bucket = "last_30_days" if (now - followup_at).days <= 30 else "1_3_months_ago"
         bucket_dir = resumes_dir / bucket
         bucket_dir.mkdir(parents=True, exist_ok=True)
@@ -546,7 +555,7 @@ def generate(
         c = make_candidate(rng, submitted_at, "email")
         body = render_followup_body(c, submitted_at - timedelta(days=rng.randint(5, 20)))
         item_id = f"followup-standalone-{i:05d}-{slugify(c.first_name + c.last_name)}"
-        filename = f"{item_id}.txt"
+        filename = tag_filename(session_id, f"{item_id}.txt")
         bucket_dir = resumes_dir / bucket
         bucket_dir.mkdir(parents=True, exist_ok=True)
         bucket_path = bucket_dir / filename
@@ -592,7 +601,7 @@ def generate(
             body = render_resume_body(snapshot)
             item_id = f"upskill-{upskill_items:05d}-{slugify(orig_c.first_name + orig_c.last_name)}"
             upskill_items += 1
-            filename = f"{item_id}.txt"
+            filename = tag_filename(session_id, f"{item_id}.txt")
             bucket = bucket_for_date(now, new_date)
             bucket_dir = resumes_dir / bucket
             bucket_dir.mkdir(parents=True, exist_ok=True)
@@ -619,15 +628,47 @@ def generate(
             )
             cursor, cursor_date = snapshot, new_date
 
+    for entry in manifest:
+        entry.session_id = session_id
+
+    session_label = label or f"{len(manifest)} candidates • {now:%b %d, %Y %H:%M}"
+    session_summary = {
+        "id": session_id,
+        "label": session_label,
+        "generated_at": now.isoformat(),
+        "seed": seed,
+        "initial_count": initial_count,
+        "followup_count": followup_count,
+        "upskill_count": upskill_items,
+        "total_items": len(manifest),
+    }
+
+    # Merged, not overwritten: each generation is its own tagged session
+    # (unique filenames via tag_filename, so nothing from a prior run is
+    # clobbered on disk either) — a recruiter who generates a second batch
+    # keeps the first one scannable/deletable independently, rather than
+    # the previous behavior of silently replacing the whole fixture set.
     manifest_path = out_dir / "emails_manifest.json"
+    prior_sessions: list[dict] = []
+    prior_emails: list[dict] = []
+    if manifest_path.exists():
+        try:
+            prior = json.loads(manifest_path.read_text())
+            prior_sessions = prior.get("sessions", [])
+            prior_emails = prior.get("emails", [])
+        except (OSError, json.JSONDecodeError):
+            pass
+
+    all_emails = [*prior_emails, *[dataclasses.asdict(entry) for entry in manifest]]
     manifest_path.write_text(
         json.dumps(
             {
                 "generated_at": now.isoformat(),
                 "seed": seed,
                 "attachments_dir": "attachments",
-                "count": len(manifest),
-                "emails": [entry.__dict__ for entry in manifest],
+                "count": len(all_emails),
+                "sessions": [*prior_sessions, session_summary],
+                "emails": all_emails,
             },
             indent=2,
         ),
@@ -690,6 +731,8 @@ repeated 2,000 times. Match *scores* are still a fixed placeholder in mock mode 
         "upskill_journey_candidates": len(upskill_journey_candidates),
         "resumes_dir": str(resumes_dir.resolve()),
         "manifest_path": str(manifest_path.resolve()),
+        "session_id": session_id,
+        "label": session_label,
     }
     print(f"Done. {len(manifest)} items written to {out_dir}/")
     print(f"  resumes/       — folder-scan tree, {len(list(resumes_dir.rglob('*.*')))} files")
@@ -708,10 +751,11 @@ def main() -> None:
     parser.add_argument(
         "--upskill", type=int, default=1400, help="Number of candidates who get multi-year upskill resubmissions"
     )
+    parser.add_argument("--label", default=None, help="Human-readable label for this generation session")
     args = parser.parse_args()
 
     out_dir = Path(args.out)
-    generate(out_dir, args.seed, args.initial, args.followups, args.upskill)
+    generate(out_dir, args.seed, args.initial, args.followups, args.upskill, label=args.label)
 
 
 if __name__ == "__main__":

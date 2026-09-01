@@ -14,6 +14,7 @@ import { ProgressBar, useSimulatedProgress } from "../components/ui/progress-bar
 import { CancelJobButton } from "../components/ui/cancel-job-button";
 import { TimingBadge } from "../components/ui/timing-badge";
 import { SampleDataGenerator } from "../components/scan/sample-data-generator";
+import { SampleSessions } from "../components/scan/sample-sessions";
 import { DangerZone } from "../components/scan/danger-zone";
 import { MaintenanceTasks } from "../components/scan/maintenance-tasks";
 import { LlmConsentModal } from "../components/scan/llm-consent-modal";
@@ -404,6 +405,11 @@ export function ScanPage() {
         )}
 
         <SampleDataGenerator />
+        <SampleSessions
+          refreshKey={`${lastGenerated?.session_id ?? ""}:${
+            lastResult ? `${lastResult.resumes_found}-${lastResult.candidates_created}-${lastResult.candidates_updated}` : ""
+          }`}
+        />
         <MaintenanceTasks />
         <DangerZone />
       </div>

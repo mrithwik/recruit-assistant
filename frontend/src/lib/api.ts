@@ -282,4 +282,11 @@ export const api = {
       body: JSON.stringify({ initial, followups, upskill, seed }),
     }),
   clearData: () => request<import("./types").ClearDataResult>("/dev-tools/clear-data", { method: "POST" }),
+
+  listSampleSessions: () => request<import("./types").SampleSession[]>("/dev-tools/sample-sessions"),
+  deleteSampleSession: (sessionId: string) =>
+    request<import("./types").SampleSessionDeleteResult>(
+      `/dev-tools/sample-sessions/${encodeURIComponent(sessionId)}`,
+      { method: "DELETE" },
+    ),
 };

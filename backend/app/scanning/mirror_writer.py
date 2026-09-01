@@ -102,3 +102,51 @@ def delete_candidate_mirror(candidate_id: str, sources: list["ResumeSource"]) ->
             target_dir.rmdir()
         except OSError:
             pass  # not empty — something unexpected is in there, leave it
+
+
+def delete_candidate_mirror_partial(
+    candidate_id: str, sources_to_delete: list["ResumeSource"], surviving_sources: list["ResumeSource"]
+) -> None:
+    """Removes mirror files for a *subset* of a candidate's sources, keeping
+    the candidate itself — used when trimming a sample-data session off a
+    candidate that also has sources from another session or from real data
+    (see routes/dev_tools.py's delete_sample_session). Unlike
+    delete_candidate_mirror, this must not blindly wipe every file in a
+    shared target_dir: write_mirror keys directories on candidate + date,
+    not per-submission, so two sources from *different* sessions scanned on
+    the same day can land in the same directory — a same-extension resubmit
+    even overwrites the earlier session's resume.<ext>/meta.json/
+    profile_summary.md in place, so both ResumeSource rows can point at the
+    literal same physical file. A resume file is only deleted if no
+    surviving source still points at that exact path; meta.json/
+    profile_summary.md (and the directory itself) are only removed if no
+    surviving source points anywhere in that directory at all."""
+    surviving_dirs = {Path(s.file_path).parent for s in surviving_sources}
+    surviving_paths = {Path(s.file_path) for s in surviving_sources}
+
+    by_dir: dict[Path, list[Path]] = {}
+    for source in sources_to_delete:
+        by_dir.setdefault(Path(source.file_path).parent, []).append(Path(source.file_path))
+
+    for target_dir, resume_paths in by_dir.items():
+        for resume_path in resume_paths:
+            if resume_path in surviving_paths:
+                continue  # a surviving source still needs this exact file
+            resume_path.unlink(missing_ok=True)
+
+        if target_dir in surviving_dirs:
+            continue  # a surviving source still lives in this directory — leave meta.json/summary alone
+
+        meta_path = target_dir / "meta.json"
+        try:
+            meta = json.loads(meta_path.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        if meta.get("candidate_id") != candidate_id:
+            continue
+        (target_dir / "profile_summary.md").unlink(missing_ok=True)
+        meta_path.unlink(missing_ok=True)
+        try:
+            target_dir.rmdir()
+        except OSError:
+            pass  # not empty — something unexpected is in there, leave it

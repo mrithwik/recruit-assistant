@@ -264,6 +264,25 @@ export interface GenerateSampleDataResult {
   upskill_journey_candidates: number;
   resumes_dir: string;
   manifest_path: string;
+  session_id: string;
+  label: string;
+}
+
+export interface SampleSession {
+  id: string;
+  label: string;
+  generated_at: string;
+  seed: number | null;
+  total_items: number;
+  candidates_scanned: number;
+  scanned: boolean;
+}
+
+export interface SampleSessionDeleteResult {
+  candidates_deleted: number;
+  candidates_trimmed: number;
+  sources_deleted: number;
+  files_deleted: boolean;
 }
 
 export interface DraftEmail {

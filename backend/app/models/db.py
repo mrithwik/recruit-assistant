@@ -136,6 +136,11 @@ class ResumeSource(Base):
     # Deep link to the source email — blank for folder-origin resumes and
     # mock fixtures. See email_ingestor.py.
     email_link: Mapped[str] = mapped_column(String, default="")
+    # Which sample-data generation run this came from (blank for real data,
+    # and for mock data ingested before this tagging existed) — lets a
+    # recruiter delete one generated batch without touching others. See
+    # app/dev_tools/session_tagging.py.
+    generation_session_id: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
 
     candidate: Mapped["Candidate"] = relationship(back_populates="sources")
 

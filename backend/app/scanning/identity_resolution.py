@@ -85,7 +85,7 @@ def merge_into_candidate(existing: Candidate | None, profile: CandidateProfile, 
 
 def build_resume_source(candidate_id: str, origin: ResumeOrigin, source_ref: str, content_hash: str,
                          file_path: str, date_submitted, additional_attachments: list[str] | None = None,
-                         email_link: str = "") -> ResumeSource:
+                         email_link: str = "", generation_session_id: str | None = None) -> ResumeSource:
     return ResumeSource(
         id=str(uuid.uuid4()),
         candidate_id=candidate_id,
@@ -96,4 +96,5 @@ def build_resume_source(candidate_id: str, origin: ResumeOrigin, source_ref: str
         date_submitted=date_submitted,
         additional_attachments=additional_attachments or [],
         email_link=email_link,
+        generation_session_id=generation_session_id,
     )

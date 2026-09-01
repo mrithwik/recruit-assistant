@@ -537,6 +537,7 @@ class GenerateSampleDataRequest(BaseModel):
     upskill: int = 100
     seed: int = 42
     out_dir: str = ""  # blank = default sample_data/ next to data/
+    label: str | None = None  # blank = auto-labeled from counts + timestamp
 
 
 class GenerateSampleDataOut(BaseModel):
@@ -547,6 +548,25 @@ class GenerateSampleDataOut(BaseModel):
     upskill_journey_candidates: int
     resumes_dir: str
     manifest_path: str
+    session_id: str
+    label: str
+
+
+class SampleSessionOut(BaseModel):
+    id: str
+    label: str
+    generated_at: str
+    seed: int | None = None
+    total_items: int
+    candidates_scanned: int
+    scanned: bool
+
+
+class SampleSessionDeleteOut(BaseModel):
+    candidates_deleted: int
+    candidates_trimmed: int
+    sources_deleted: int
+    files_deleted: bool
 
 
 # --- Mock mode (runtime-toggleable, see app/runtime_settings.py) ---
