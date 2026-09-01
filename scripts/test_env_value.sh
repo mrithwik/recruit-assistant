@@ -57,6 +57,15 @@ check "double-quoted value" "0.0.0.0" "$(value API_HOST)"
 printf "API_HOST='0.0.0.0'\n" > "$tmp_env"
 check "single-quoted value" "0.0.0.0" "$(value API_HOST)"
 
+# --- Whitespace padded INSIDE the quotes (QA round 3 finding) — the trim
+# passes have to run again after the quote-strip, not just before it, or
+# this padding is never exposed/removed. ---
+printf 'API_HOST=" 0.0.0.0 "\n' > "$tmp_env"
+check "whitespace padded inside quotes" "0.0.0.0" "$(value API_HOST)"
+
+printf "API_HOST='\t0.0.0.0\t'\n" > "$tmp_env"
+check "tabs padded inside quotes" "0.0.0.0" "$(value API_HOST)"
+
 # --- Trailing whitespace, no comment (QA round 2 finding) ---
 printf 'API_HOST=0.0.0.0   \n' > "$tmp_env"
 check "trailing whitespace, no comment" "0.0.0.0" "$(value API_HOST)"
@@ -72,6 +81,12 @@ check "quoted + comment + CRLF combined" "0.0.0.0" "$(value API_HOST)"
 # --- A different key on the same file isn't cross-matched ---
 printf 'API_HOST=0.0.0.0\nAPI_HOST_FOO=bar\n' > "$tmp_env"
 check "similarly-prefixed key not cross-matched" "0.0.0.0" "$(value API_HOST)"
+
+# --- Known, deliberately-unhandled edge cases (not asserted here) ---
+# Mismatched quote types (API_HOST="0.0.0.0') and a literal `#` inside a
+# quoted value both require deliberately malformed .env syntax rather than
+# a plausible real config shape, and are lower priority than everything
+# above — noted, not fixed.
 
 echo
 if [ "$failures" -eq 0 ]; then

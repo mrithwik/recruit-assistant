@@ -6,11 +6,14 @@
 # out here before exec'ing uvicorn.
 #
 # Handles what a real .env commonly contains: the key simply being absent,
-# inline `# comments`, surrounding single or double quotes, trailing
-# whitespace, and CRLF line endings (a file saved on Windows, or checked
-# out with core.autocrlf=true) — each of those broke a naive
-# grep/cut/sed version during review; every case here has a matching test
-# in scripts/test_env_value.sh.
+# inline `# comments`, surrounding single or double quotes, whitespace
+# (both outside the quotes and padded inside them, e.g. `API_HOST=" x "`
+# — the trim runs both before AND after the quote-strip below, since
+# padding inside the quotes is only exposed once the quotes themselves are
+# gone), and CRLF line endings (a file saved on Windows, or checked out
+# with core.autocrlf=true) — each of those broke a naive grep/cut/sed
+# version during review; every case here has a matching test in
+# scripts/test_env_value.sh.
 #
 # Used by both run_all.sh and the Makefile's `run` target — one
 # implementation instead of two that can drift out of sync with each other.
@@ -34,4 +37,6 @@ fi
       -e 's/^[[:space:]]*//' \
       -e 's/[[:space:]]*$//' \
       -e 's/^"\(.*\)"$/\1/' \
-      -e "s/^'\\(.*\\)'\$/\\1/"
+      -e "s/^'\\(.*\\)'\$/\\1/" \
+      -e 's/^[[:space:]]*//' \
+      -e 's/[[:space:]]*$//'
