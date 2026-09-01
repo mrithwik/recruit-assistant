@@ -9,6 +9,8 @@ of the API. Kept intentionally simple for a local app:
   localhost it doesn't silently accept new accounts from anyone who finds it.
 - Sessions are signed, expiring bearer tokens (app/auth/security.py) — no
   server-side session store to manage for a single-process local app.
+- /auth/login is rate-limited (app/auth/rate_limit.py) — 5 failed attempts
+  locks an email out for 15 minutes, in-process, no external store needed.
 """
 
 import re
@@ -17,6 +19,7 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.auth.dependencies import require_auth
+from app.auth.rate_limit import record_failure, record_success, seconds_until_unlocked
 from app.auth.security import create_session_token, hash_password, verify_password
 from app.config import Settings
 from app.dependencies import get_settings, get_storage
@@ -78,10 +81,19 @@ def login(
     storage: BaseStorageBackend = Depends(get_storage),
     settings: Settings = Depends(get_settings),
 ):
+    # Checked before touching the DB — 5 failed attempts locks this email
+    # out for 15 minutes, raising the cost of online credential-stuffing
+    # against a login form that's reachable at all (see rate_limit.py).
+    remaining = seconds_until_unlocked(payload.email)
+    if remaining > 0:
+        raise HTTPException(429, f"Too many failed attempts — try again in {int(remaining) + 1}s")
+
     with storage.session() as session:
         user = storage.find_user_by_email(session, payload.email)
         if user is None or not verify_password(payload.password, user.password_hash):
+            record_failure(payload.email)
             raise HTTPException(401, "Incorrect email or password")
+        record_success(payload.email)
         return _issue_session(user, settings, payload.remember)
 
 

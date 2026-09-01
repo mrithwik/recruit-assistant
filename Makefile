@@ -9,7 +9,7 @@ setup: ## Install backend dependencies and set up .env
 	mkdir -p data
 
 run: ## Run the backend (single FastAPI app)
-	cd backend && python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+	cd backend && python -m uvicorn app.main:app --host "$${API_HOST:-127.0.0.1}" --port 8000 --reload
 
 test: ## Run backend tests (unit + golden-set matching regression)
 	python -m pytest backend/tests/ -v
