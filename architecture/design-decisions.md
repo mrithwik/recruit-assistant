@@ -1,4 +1,4 @@
-<!-- Version: v0 | Last updated: 2026-08-01 | Status: current -->
+<!-- Version: v0 | Last updated: 2026-09-01 | Status: current -->
 
 # Design Decisions — Architecture Decision Records (ADRs)
 
@@ -172,6 +172,102 @@ and get backed up/synced/shared far more casually than an OS credential store.
 
 **Consequences:** Disconnecting an account (`DELETE /email-accounts/{id}`) also purges the
 keychain entry — no orphaned credentials.
+
+---
+
+## ADR-010: Bind to Localhost by Default, Rate-Limit Login In-Process
+
+**Context:** A four-perspective stakeholder review (`reports/stakeholder-review.md`) found the
+backend listening on `0.0.0.0` by default despite being documented as local-first, and no
+throttling on `POST /auth/login` — both real findings, scoped explicitly to the confirmed
+deployment model of one instance per recruiter's own laptop, not a shared server.
+
+**Decision:** `.env.example` sets `API_HOST=127.0.0.1`. Login attempts are throttled by
+`app/auth/rate_limit.py` — an in-memory, per-process, per-email counter (5 failures → 15-minute
+lockout), identical response shape for a locked-out real email and a nonexistent one.
+
+**Alternatives Considered:** A Redis-backed rate limiter — real overkill for a single-process
+app with one possible account; per-IP throttling instead of per-email — less meaningful when
+the whole point is one trusted operator on one machine, and per-email is what actually stops
+credential-stuffing against the one account that exists.
+
+**Consequences:** Rate-limit state doesn't survive a restart (acceptable — an attacker who can
+restart the process already has more access than the lockout was protecting against). Mirrors
+the existing `job_registry.py` module-global pattern (ADR mirrors the in-memory scan-job
+registry already established elsewhere in this codebase) rather than introducing a new
+persistence mechanism for state that's fine to lose.
+
+---
+
+## ADR-011: Pipeline Stage Lives on `Match`, Not a New Table or `Candidate`
+
+**Context:** The stakeholder review's top recruiter-facing gap: the app tracks match
+*quality* (`tier`) but not process *status* (sourced → screened → submitted → interviewing →
+offer → placed/declined) — the single most-used view in any ATS, per the review.
+
+**Decision:** `PipelineStage` enum, mirroring the existing `MatchTier` pattern exactly, added
+as a plain column on `Match` — the same row `tier`/`flags`/`judge_notes` already live on.
+Defaults to `sourced`, free-form transitions (no enforced state machine), auto-migrated via
+the existing schema-driven `_add_missing_columns`.
+
+**Alternatives Considered:** A new `PipelineEvent`/history table — richer (a timeline of every
+transition) but unrequested and unbuilt-toward; a column on `Candidate` instead of `Match` —
+wrong shape entirely, since stage is inherently per-job (a candidate can be "interviewing" for
+one role and merely "sourced," never acted on, for another) and `Candidate` has no per-job
+scope to hang it on.
+
+**Consequences:** Zero new tables, zero new migration machinery — the feature is exactly as
+expensive to add as any other column this project has added before it (`recruiter_notes`,
+`last_scanned_at`, etc.), and existing rows backfill to `sourced` with no manual step.
+
+---
+
+## ADR-012: Per-Candidate Delete Is a Real Delete, Not a Soft-Delete
+
+**Context:** The only existing deletion path (`dev_tools.clear_data`, the "danger zone") wipes
+every job/candidate/match in the database — no way to honor one person's actual
+right-to-erasure request without destroying everyone else's data too.
+
+**Decision:** `DELETE /candidates/{id}` performs a genuine, irreversible delete — the DB row
+via `session.delete()` (cascading to `Match`/`ResumeSource` through the ORM's existing
+`delete-orphan` relationships), plus the on-disk mirror files (resume, summary, meta),
+verified against `meta.json`'s own `candidate_id` before anything is touched, and removed by
+exact filename — never an `rmtree`. No Undo affordance on the frontend, unlike the existing
+job-deletion and note-deletion Undo patterns.
+
+**Alternatives Considered:** Soft-delete (mirroring `Job.active=False`) — the pattern this
+project already uses elsewhere, but wrong here: the entire premise is real erasure, and a
+soft-deleted row with real PII still sitting in the database and on disk doesn't satisfy that;
+an Undo-toast (mirroring note deletion) — same problem, an "undo" only makes sense when
+nothing was actually destroyed yet.
+
+**Consequences:** No recovery path if triggered by mistake — the typed `"DELETE"`
+confirmation (mirroring the existing danger-zone pattern) is the only safeguard, deliberately,
+since a real safety net here would contradict the feature's purpose. QA caught a real gap in
+the on-disk cleanup on first pass (two same-day submissions sharing one mirror directory) —
+see project log section 37 — now covered by a regression test.
+
+---
+
+## ADR-013: Real-LLM Consent Persists on `User`, Not `runtime_settings`
+
+**Context:** Switching mock LLM mode off sends full resume text and job descriptions to a
+third-party API (OpenRouter/OpenAI) with no acknowledgment step — flagged by the stakeholder
+review as a real gap independent of the multi-tenancy question.
+
+**Decision:** New `User.real_llm_consent_given_at` (nullable `datetime`), set once via `PATCH
+/settings/mock-mode`'s `consent_ack: true` and never re-checked afterward. A new
+`LlmConsentModal` intercepts the frontend toggle before the API call fires, the first time.
+
+**Alternatives Considered:** Storing consent in `app/runtime_settings.py` alongside the
+mock/real flags themselves — wrong on purpose: that module is deliberately in-memory-only (see
+ADR-008), so the mock/real toggle resets to mock on every backend restart by design, but
+re-asking for a one-time consent acknowledgment on every restart would be actively
+user-hostile, not merely inconsistent with the toggle's own reset behavior.
+
+**Consequences:** The two states now deliberately diverge across a restart — `use_mock_llm`
+resets, `real_llm_consent_given` doesn't — which is the correct behavior, not a bug, and is
+covered by a test that restarts the backend process and asserts exactly that split.
 
 ---
 

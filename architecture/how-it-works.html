@@ -871,6 +871,21 @@
         <h4>You can offer up a test dataset instead</h4>
         <p>A built-in generator can create thousands of realistic fake resumes for trying the app out, so you never have to test with real candidates' data.</p>
       </div>
+      <div class="privacy-card">
+        <div class="p-icon">✓</div>
+        <h4>Deleting a candidate actually deletes them</h4>
+        <p>A per-candidate delete removes their database record and every resume file on disk — not a soft "hide," a real, honest erasure for when someone asks to be forgotten.</p>
+      </div>
+      <div class="privacy-card">
+        <div class="p-icon">✓</div>
+        <h4>Real AI scoring asks first, once</h4>
+        <p>The first time you switch on real (non-mock) AI scoring, a plain-language dialog explains exactly what leaves the machine before you confirm — not buried in a settings toggle.</p>
+      </div>
+      <div class="privacy-card">
+        <div class="p-icon">✓</div>
+        <h4>Only reachable from this machine</h4>
+        <p>The server listens on localhost only, not the whole network — someone on the same office Wi-Fi can't reach it, and repeated failed logins lock out automatically.</p>
+      </div>
     </div>
   </div>
 </section>
@@ -904,13 +919,16 @@
     <h3 style="font-size:15px; margin: 30px 0 12px;">Where things live</h3>
     <div class="filetree"><span class="comment"># the shape of the codebase — modules map directly to the building blocks above</span>
 <span class="dir">backend/app/</span>
+├── <span class="dir">auth/</span>          <span class="comment"># single-account login, session tokens, rate limiting</span>
 ├── <span class="dir">scanning/</span>      <span class="comment"># folder + email readers, text extraction, identity matching</span>
 ├── <span class="dir">matching/</span>      <span class="comment"># embeddings, two-stage scorer, AI judge</span>
 ├── <span class="dir">storage/</span>       <span class="comment"># the swappable local-database interface</span>
 ├── <span class="dir">criteria/</span>      <span class="comment"># built-in + custom weighted matching criteria</span>
 ├── <span class="dir">email_auth/</span>    <span class="comment"># OAuth + OS keychain token handling</span>
 ├── <span class="dir">email_draft/</span>   <span class="comment"># outreach email generator</span>
+├── <span class="dir">dashboard/</span>     <span class="comment"># one aggregated summary behind the dashboard</span>
 ├── <span class="dir">scheduler/</span>     <span class="comment"># opt-in nightly auto-scan</span>
+├── <span class="dir">maintenance/</span>   <span class="comment"># backfill tasks when a feature ships after data exists</span>
 └── <span class="dir">routes/</span>        <span class="comment"># the API surface the frontend talks to</span>
 
 <span class="dir">frontend/src/</span>
@@ -947,6 +965,30 @@
       <div class="road-item">
         <span class="status done">Shipped</span>
         <p><strong>Opt-in nightly scanning, Docker packaging, and a public repository</strong> with continuous testing on every change.</p>
+      </div>
+      <div class="road-item">
+        <span class="status done">Shipped</span>
+        <p><strong>Security hardening</strong> — the server only listens on this machine by default, not the whole network, and repeated failed logins lock out automatically. Followed a four-perspective stakeholder review that read the app as a recruitment analyst, a product owner, a data-governance lead, and a CEO, each independently.</p>
+      </div>
+      <div class="road-item">
+        <span class="status done">Shipped</span>
+        <p><strong>Pipeline stage tracking</strong> — where a candidate actually stands in the hiring process (sourced through placed or declined), tracked separately from match quality, on Match Results, Candidate Detail, and the dashboard.</p>
+      </div>
+      <div class="road-item">
+        <span class="status done">Shipped</span>
+        <p><strong>Real per-candidate deletion</strong> — an honest right-to-erasure path, distinct from the existing "clear everything" reset, that removes one person's database record and every file on disk.</p>
+      </div>
+      <div class="road-item">
+        <span class="status done">Shipped</span>
+        <p><strong>A one-time consent step before real AI scoring</strong> — asked once, remembered for this installation, explaining plainly what leaves the machine.</p>
+      </div>
+      <div class="road-item">
+        <span class="status next">Later</span>
+        <p><strong>Faster scans and matches</strong> — the mailbox-scanning and AI-matching pipelines are fully mapped for speed (parallelizing per-resume processing, smarter use of existing AI concurrency, shrinking what gets sent per scoring call) but not yet built.</p>
+      </div>
+      <div class="road-item">
+        <span class="status next">Later</span>
+        <p><strong>A locally-hosted, recruiting-specific AI model</strong> — long-term: a small open-source model, fine-tuned specifically for resume/job scoring and run entirely on the recruiter's own machine, to cut real-mode AI cost toward zero rather than paying a cloud provider per scoring call indefinitely. Not yet scoped — needs a training-data plan, a model-size-vs-laptop-hardware decision, and a quality bar to clear before it could replace today's cloud models as the default.</p>
       </div>
       <div class="road-item">
         <span class="status next">Later</span>

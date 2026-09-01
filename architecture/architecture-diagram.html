@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Recruit Assistant — Architecture Diagrams</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700;9..144,900&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;0,700;1,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+
+<style>
+  :root {
+    --paper: #EEF0F4;
+    --surface: #FFFFFF;
+    --surface-2: #F5F6F9;
+    --ink: #1C2333;
+    --ink-soft: #565F73;
+    --ink-faint: #8991A6;
+    --indigo: #4338CA;
+    --indigo-soft: #EEECFB;
+    --indigo-line: #C7C2F0;
+    --rust: #A34E1F;
+    --rust-soft: #F7ECE3;
+    --rust-line: #E6C7AC;
+    --line: #D7DBE3;
+    --line-soft: #E4E7ED;
+    --good: #1E7F4F;
+    --good-soft: #E4F3EB;
+    --warn: #9A6206;
+    --warn-soft: #FBF0DC;
+    --critical: #B23B3B;
+    --critical-soft: #FBEAEA;
+    --shadow: 0 1px 2px rgba(28,35,51,0.04), 0 6px 20px -8px rgba(28,35,51,0.10);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #10131C; --surface: #171B27; --surface-2: #1D2230;
+      --ink: #E8EAF1; --ink-soft: #A7AFC4; --ink-faint: #6C7488;
+      --indigo: #9089F2; --indigo-soft: #232041; --indigo-line: #3C3670;
+      --rust: #E39A66; --rust-soft: #2C2118; --rust-line: #513824;
+      --line: #2A2F40; --line-soft: #20242F;
+      --good: #5FCB93; --good-soft: #142A20;
+      --warn: #E0AC4C; --warn-soft: #2C2312;
+      --critical: #E38080; --critical-soft: #2C1717;
+      --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 12px 30px -10px rgba(0,0,0,0.5);
+    }
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: "Source Sans 3", -apple-system, sans-serif;
+    font-size: 16px;
+    line-height: 1.65;
+  }
+  code, .mono { font-family: "IBM Plex Mono", ui-monospace, monospace; }
+
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 0 24px; }
+
+  header.top {
+    padding: 56px 0 36px;
+    border-bottom: 1px solid var(--line);
+    margin-bottom: 8px;
+  }
+  .eyebrow {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 12px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--indigo);
+    margin: 0 0 12px;
+  }
+  h1 {
+    font-family: "Fraunces", serif;
+    font-weight: 700;
+    font-size: 40px;
+    line-height: 1.08;
+    letter-spacing: -0.01em;
+    margin: 0 0 14px;
+    text-wrap: balance;
+  }
+  .dek { font-size: 17px; color: var(--ink-soft); max-width: 68ch; margin: 0; }
+
+  nav.toc {
+    display: flex; flex-wrap: wrap; gap: 8px 10px;
+    padding: 20px 0 40px;
+  }
+  nav.toc a {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 12.5px;
+    color: var(--ink-soft);
+    text-decoration: none;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    padding: 6px 12px;
+    border-radius: 8px;
+  }
+  nav.toc a:hover { border-color: var(--indigo-line); color: var(--indigo); }
+
+  section { padding: 48px 0; border-bottom: 1px solid var(--line-soft); }
+  section:last-of-type { border-bottom: none; }
+  .section-head { margin-bottom: 22px; }
+  .num {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 12px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--rust);
+  }
+  h2 {
+    font-family: "Fraunces", serif;
+    font-weight: 700;
+    font-size: 27px;
+    margin: 6px 0 8px;
+    text-wrap: balance;
+  }
+  .lede { color: var(--ink-soft); font-size: 15px; max-width: 70ch; margin: 0; }
+
+  .diagram-card {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    padding: 24px;
+    margin-top: 20px;
+    box-shadow: var(--shadow);
+    overflow-x: auto;
+  }
+  .diagram-card .mermaid { display: flex; justify-content: center; }
+
+  .note {
+    font-size: 13.5px;
+    color: var(--ink-faint);
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px dashed var(--line);
+  }
+  .note code { font-size: 0.92em; }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 16px; font-size: 13px; color: var(--ink-soft); }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .swatch { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+
+  footer {
+    padding: 40px 0 60px;
+    color: var(--ink-faint);
+    font-size: 13px;
+    display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px;
+  }
+  footer a { color: var(--ink-soft); }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header class="top">
+    <p class="eyebrow">Recruit Assistant &middot; Engineering Reference</p>
+    <h1>Architecture diagrams</h1>
+    <p class="dek">System topology, data model, and request flows — for reading the codebase, not for a portfolio audience. See <a href="how-it-works.html">how-it-works.html</a> for the narrative version.</p>
+  </header>
+
+  <nav class="toc">
+    <a href="#system">System topology</a>
+    <a href="#data-model">Data model</a>
+    <a href="#ingest-flow">Ingest flow</a>
+    <a href="#match-flow">Matching flow</a>
+    <a href="#module-map">Module map</a>
+    <a href="#request-lifecycle">Auth &amp; deletion lifecycle</a>
+  </nav>
+</div>
+
+<div class="wrap">
+
+  <section id="system">
+    <div class="section-head">
+      <span class="num">01</span>
+      <h2>System topology</h2>
+      <p class="lede">One FastAPI process, modular internally by domain — not a microservices split. Binds to <code>127.0.0.1</code> by default, not every network interface.</p>
+    </div>
+    <div class="diagram-card">
+      <pre class="mermaid">
+graph TB
+    Browser([Browser]) -->|":5173 dev"| Frontend[React Frontend]
+    Frontend -->|"/api/v1/*, /health<br/>Bearer token"| Backend["FastAPI Backend<br/>127.0.0.1:8000"]
+
+    Backend --> SQLite[(SQLite)]
+    Backend --> Mirror[(Local file mirror<br/>data/candidates/)]
+    Backend --> Keychain[(OS Keychain)]
+    Backend --> LLM{LLM Client}
+    Backend --> Gmail[Gmail API]
+    Backend --> Graph[Microsoft Graph API]
+
+    LLM -->|primary| OpenRouter[OpenRouter]
+    LLM -->|fallback| OpenAI[OpenAI]
+    LLM -->|USE_MOCK_LLM=true| Mock[MockLLMClient<br/>zero external calls]
+
+    subgraph modules["backend/app/ — single process, DI via dependencies.py"]
+      direction LR
+      Auth[auth/]
+      Scanning[scanning/]
+      Matching[matching/]
+      Storage[storage/]
+      Dashboard[dashboard/]
+      Scheduler[scheduler/]
+    end
+
+    Backend -.-> modules
+
+    style Frontend fill:#4338CA,color:#fff
+    style Backend fill:#1C2333,color:#fff
+    style Mock fill:#8991A6,color:#fff
+    style OpenRouter fill:#1E7F4F,color:#fff
+      </pre>
+    </div>
+    <p class="note">Full module inventory: <a href="backend-architecture.md">backend-architecture.md</a>. Why one process, not several: <a href="design-decisions.md">design-decisions.md</a> ADR-001.</p>
+  </section>
+
+  <section id="data-model">
+    <div class="section-head">
+      <span class="num">02</span>
+      <h2>Data model</h2>
+      <p class="lede">SQLite via SQLAlchemy. Every column addition on this project auto-migrates on startup via a schema-driven diff against <code>PRAGMA table_info</code> — no manual migration scripts anywhere in this history.</p>
+    </div>
+    <div class="diagram-card">
+      <pre class="mermaid">
+erDiagram
+    USER ||--o{ MATCH : "single account"
+    JOB ||--o{ MATCH : scored_against
+    JOB ||--o{ JOB_CRITERION : has
+    CANDIDATE ||--o{ MATCH : scored
+    CANDIDATE ||--o{ RESUME_SOURCE : "sourced from"
+    CRITERION ||--o{ JOB_CRITERION : selected_as
+    EMAIL_ACCOUNT ||--o{ SCHEDULED_SOURCE : "opts into"
+
+    USER {
+        string id PK
+        string email
+        string password_hash
+        datetime real_llm_consent_given_at "nullable, one-time"
+    }
+    JOB {
+        string id PK
+        string title
+        string company
+        bool active "soft-delete"
+        int criteria_version
+    }
+    CANDIDATE {
+        string id PK
+        string identity_fingerprint UK
+        json recruiter_notes
+        json history
+        json embedding "cached, reused across runs"
+    }
+    RESUME_SOURCE {
+        string id PK
+        string candidate_id FK
+        string content_hash "dedup key"
+        string file_path "mirror on disk"
+    }
+    MATCH {
+        string id PK
+        string job_id FK
+        string candidate_id FK
+        string tier "quality: poor to great"
+        string pipeline_stage "status: sourced to placed"
+        json flags
+    }
+    CRITERION {
+        string id PK
+        bool is_builtin
+    }
+    JOB_CRITERION {
+        string job_id FK
+        string criterion_id FK
+        bool enabled
+    }
+      </pre>
+    </div>
+    <div class="legend">
+      <span><span class="swatch" style="background:var(--indigo)"></span> Cascade-delete relationship (ORM <code>delete-orphan</code>)</span>
+    </div>
+    <p class="note"><code>Match.tier</code> (quality) and <code>Match.pipeline_stage</code> (status) are deliberately separate columns on the same row, not derived from one another — see design-decisions.md ADR-011. Deleting a <code>Candidate</code> cascades to its <code>Match</code> and <code>ResumeSource</code> rows automatically; the on-disk mirror files are cleaned up separately (see <a href="#request-lifecycle">§06</a>).</p>
+  </section>
+
+  <section id="ingest-flow">
+    <div class="section-head">
+      <span class="num">03</span>
+      <h2>Ingest flow — one resume, folder or email</h2>
+      <p class="lede">Both sources converge on the same orchestration function and produce the same on-disk shape.</p>
+    </div>
+    <div class="diagram-card">
+      <pre class="mermaid">
+sequenceDiagram
+    participant Src as Folder or Mailbox
+    participant Ingestor as ResumeIngestor
+    participant Svc as ingest_service.run_scan
+    participant Parser as parser.extract_text
+    participant ID as identity_resolution
+    participant Mirror as mirror_writer
+    participant DB as SQLite
+
+    Src->>Ingestor: yield IngestedResume
+    Ingestor->>Svc: async for ingested in scan()
+    Svc->>Parser: extract_text(file_bytes)
+    Parser-->>Svc: raw_text (or OCR fallback)
+    Svc->>Svc: parse_resume() → CandidateProfile
+    Svc->>ID: compute_fingerprint(profile)
+    ID-->>Svc: existing candidate or new
+    Svc->>Mirror: write_mirror(resume, summary, meta.json)
+    Mirror-->>Svc: file_path
+    Svc->>DB: add Candidate/ResumeSource (no flush)
+    Note over Svc,DB: checkpoint every 500 resumes,<br/>plus once at the end — not per-resume commits
+    Svc->>DB: commit()
+      </pre>
+    </div>
+    <p class="note">Currently sequential per resume (parse → summarize → mirror-write, one at a time) — the primary lever in <a href="../reports/scan-match-speed-plan.md">reports/scan-match-speed-plan.md</a>. Mailbox fetch itself is already concurrent (<code>bounded_gather</code>, ~15 in flight).</p>
+  </section>
+
+  <section id="match-flow">
+    <div class="section-head">
+      <span class="num">04</span>
+      <h2>Matching flow — two-stage + judge</h2>
+      <p class="lede">Embedding similarity does the cheap first pass over the whole pool; the LLM only scores the shortlist, and the most expensive model only reviews borderline calls.</p>
+    </div>
+    <div class="diagram-card">
+      <pre class="mermaid">
+flowchart LR
+    A[Full candidate pool] -->|"embed once,<br/>cached on Candidate row"| B["Cosine-similarity<br/>pre-filter"]
+    B -->|"top_n × 3<br/>(SHORTLIST_MULTIPLIER)"| C["Deep LLM score<br/>(deep_score, bounded_gather)"]
+    C -->|"score 40–70<br/>only"| D["Judge re-score<br/>(judge_score)"]
+    C -->|"score &lt;40 or &gt;70"| F[Final tier]
+    D --> F
+    F --> G[(Match row:<br/>tier + pipeline_stage)]
+
+    style B fill:#EEECFB,stroke:#4338CA
+    style C fill:#F7ECE3,stroke:#A34E1F
+    style D fill:#FBF0DC,stroke:#9A6206
+      </pre>
+    </div>
+    <p class="note">Concurrency at the deep-score and judge stages is capped by <code>max_concurrent_llm_calls</code> (default 8) — see design-decisions.md ADR-006, and the speed plan for concrete levers on this stage (retry/backoff, batching, prompt size).</p>
+  </section>
+
+  <section id="module-map">
+    <div class="section-head">
+      <span class="num">05</span>
+      <h2>Backend module dependencies</h2>
+      <p class="lede">Routes are thin — they depend on domain modules via <code>dependencies.py</code>'s DI getters, never the reverse.</p>
+    </div>
+    <div class="diagram-card">
+      <pre class="mermaid">
+graph TB
+    Routes["routes/<br/>(one file per resource)"] --> DI[dependencies.py]
+    DI --> Storage["storage/<br/>BaseStorageBackend"]
+    DI --> LLMc["matching/llm_client.py"]
+    DI --> Settings["config.py<br/>Settings"]
+
+    Routes --> Scanning[scanning/]
+    Routes --> Matching[matching/]
+    Routes --> Criteria[criteria/]
+    Routes --> Dashboard[dashboard/]
+    Routes --> Auth[auth/]
+    Routes --> EmailDraft[email_draft/]
+    Routes --> Maintenance[maintenance/]
+
+    Scanning --> Storage
+    Matching --> Storage
+    Matching --> LLMc
+    Criteria --> Storage
+    Dashboard --> Storage
+    Scanning --> EmailAuth[email_auth/]
+
+    Runtime[runtime_settings.py<br/>in-memory mock/real flags] -.-> LLMc
+    Runtime -.-> Scanning
+
+    style Routes fill:#1C2333,color:#fff
+    style Storage fill:#4338CA,color:#fff
+      </pre>
+    </div>
+  </section>
+
+  <section id="request-lifecycle">
+    <div class="section-head">
+      <span class="num">06</span>
+      <h2>Auth &amp; per-candidate deletion lifecycle</h2>
+      <p class="lede">Two flows worth diagramming precisely, since both were the subject of a dedicated QA round each.</p>
+    </div>
+
+    <div class="diagram-card">
+      <pre class="mermaid">
+sequenceDiagram
+    participant U as Recruiter
+    participant API as POST /auth/login
+    participant RL as rate_limit.py
+    participant DB as User table
+
+    U->>API: {email, password}
+    API->>RL: seconds_until_unlocked(email)
+    alt locked out
+        RL-->>API: > 0
+        API-->>U: 401, identical shape whether<br/>the email exists or not
+    else not locked
+        API->>DB: find_user_by_email + verify hash
+        alt wrong password
+            API->>RL: record_failure(email)
+            API-->>U: 401
+        else correct
+            API->>RL: record_success(email)
+            API-->>U: 200, session token
+        end
+    end
+      </pre>
+    </div>
+
+    <div class="diagram-card">
+      <pre class="mermaid">
+sequenceDiagram
+    participant U as Recruiter
+    participant API as DELETE /candidates/{id}
+    participant Mirror as delete_candidate_mirror()
+    participant DB as SQLite
+
+    U->>API: confirm typed "DELETE"
+    API->>DB: get ResumeSource rows for candidate
+    API->>Mirror: delete_candidate_mirror(id, sources)
+    Note over Mirror: group sources by shared directory first —<br/>two same-day submissions can share one meta.json
+    Mirror->>Mirror: read meta.json once per directory,<br/>verify candidate_id matches
+    Mirror->>Mirror: delete every resume file in that group,<br/>then profile_summary.md + meta.json, then rmdir
+    API->>DB: session.delete(candidate)
+    Note over DB: Match + ResumeSource rows cascade<br/>via ORM delete-orphan — no manual per-table deletes
+    API->>DB: commit()
+    API-->>U: 204
+      </pre>
+    </div>
+    <p class="note">The grouped-by-directory step exists because of a real bug QA found on the first pass — see <a href="testing-report.md">testing-report.md</a>, Era 2 Round D, and design-decisions.md ADR-012.</p>
+  </section>
+
+</div>
+
+<footer class="wrap">
+  <span>Recruit Assistant — Architecture Diagrams</span>
+  <span><a href="README.md">architecture/README.md</a> · <a href="project-log.md">project-log.md</a> · <a href="how-it-works.html">how-it-works.html</a></span>
+</footer>
+
+<script>
+  const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: prefersDark ? 'dark' : 'default',
+    fontFamily: '"IBM Plex Mono", ui-monospace, monospace',
+    themeVariables: prefersDark ? {
+      primaryColor: '#232041',
+      primaryTextColor: '#E8EAF1',
+      primaryBorderColor: '#3C3670',
+      lineColor: '#6C7488',
+      secondaryColor: '#20242F',
+      tertiaryColor: '#171B27'
+    } : {
+      primaryColor: '#EEECFB',
+      primaryTextColor: '#1C2333',
+      primaryBorderColor: '#4338CA',
+      lineColor: '#8991A6',
+      secondaryColor: '#F7ECE3',
+      tertiaryColor: '#F5F6F9'
+    }
+  });
+</script>
+
+</body>
+</html>

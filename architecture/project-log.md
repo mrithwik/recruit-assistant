@@ -1,4 +1,4 @@
-<!-- Version: v0 | Last updated: 2026-08-31 | Status: current -->
+<!-- Version: v0 | Last updated: 2026-09-01 | Status: current -->
 
 # Project Log
 
@@ -991,6 +991,137 @@ against only real candidates rather than the whole pool with results filtered af
 `matches-store.ts`'s `runMatching`/`loadMatches` read the toggle internally, so every call
 site (Match Results' "Run matching," each job card's inline "Run," the Jobs page's bulk
 "Match all"/"Match selected") picked it up with no per-call-site changes needed.
+
+## 34. A four-perspective stakeholder review, then localhost binding + login rate limiting
+
+A standing stakeholder review (`reports/stakeholder-review.md`) read the app from four
+chairs — a recruitment BA, a product owner walking out of a demo, a data-governance/security
+lead, and the CEO — backed by an 8-round live QA pass against a real connected Gmail account
+and a 7,212-candidate dataset. Governance and the CEO agreed on one immediate, bounded pair of
+fixes ahead of any feature work, explicitly scoped to this app's actual deployment model: one
+instance per recruiter's own laptop, not a shared multi-tenant server.
+
+**Server bound to `0.0.0.0` by default.** Despite being documented as local-first, the backend
+listened on every network interface, not just the machine it ran on — anyone on the same
+office Wi-Fi could reach the API directly. `.env.example` now sets `API_HOST=127.0.0.1`, with
+the rationale for why local-first means localhost-only in an inline comment there.
+
+**No login rate limiting.** `POST /auth/login` had no lockout or throttling — nothing stopped
+online credential-stuffing against a reachable login form. New `app/auth/rate_limit.py`: an
+in-memory (module-global, single-process — see ADR-002's reasoning for why this app doesn't
+reach for Redis) per-email counter, 5 failed attempts locks that email out for 15 minutes,
+clears on success, and returns the identical response shape for a locked-out real email vs. a
+nonexistent one (no user-enumeration side channel).
+
+**A `.env` value-extraction bug found across three QA rounds, each catching what the last
+missed.** `API_HOST`/`API_PORT` overrides in `.env` silently did nothing, because `.env` is
+parsed by `pydantic-settings` *inside the Python process* — the shell scripts that launch
+`uvicorn` (`scripts/run_all.sh`, the Makefile's `run` target) never see it. Fixing this meant
+extracting just those two keys in the shell, without `source`-ing the whole file (real `.env`
+values can contain unescaped spaces — an app password — that aren't valid literal bash).
+Three QA rounds, each surfacing a shape the last one's fix didn't cover: round 1 found the
+naive `grep`/`cut` version broke when the key was simply absent (a `grep` returning no match
+exits 1, which — under `set -euo pipefail` inside a `$(...)` assignment — silently killed the
+whole script, worse than the original bug since it broke the *default* path too, not just the
+override path); round 2 found quoted values, trailing whitespace, and CRLF line endings all
+produced a real `uvicorn` startup failure (`nodename nor servname provided`); round 3 found
+whitespace padded *inside* the quote marks survived unquoting, because the trim passes only
+ran once, before the quote-strip, never after. Consolidated into one shared
+`scripts/env_value.sh` (deduplicating what had been separately, and differently, implemented
+in both `run_all.sh` and the Makefile) with `scripts/test_env_value.sh` covering all of the
+above plus two lower-priority, deliberately-unhandled edge cases (mismatched quote types, a
+literal `#` inside a quoted value) documented rather than fixed.
+
+## 35. Pipeline stage tracking — the BA review's #1 finding
+
+The stakeholder review's clearest gap: the app scores a candidate against a job (a *quality*
+signal — poor through great, or red-flagged) but had no concept of *sourced → screened →
+submitted to client → interviewing → offer → placed/declined* — a *status* signal. No way to
+answer "where is this person in the process" for any candidate, which the BA called the
+single most-used view in any ATS.
+
+New `PipelineStage` enum, mirroring `MatchTier`'s existing pattern, added as a column directly
+on `Match` (not a new table — pipeline status is job-specific, exactly the same shape
+`tier`/`flags`/`judge_notes` already are; a candidate is "interviewing" for one role and merely
+"sourced" for another). Defaults to `sourced` and backfills automatically via the existing
+schema-driven `_add_missing_columns` migration (`storage/local.py`) the same way every prior
+column addition on this project has. Free-form transitions, not an enforced state machine —
+same philosophy as `tier`/`flags` today, since real recruiting isn't strictly linear (a
+candidate can be pulled back from "submitted" to "screened"). New `POST
+/matches/{id}/stage`, a stage badge + dropdown + filter on Match Results, a stage badge on
+Candidate Detail's "Pipeline across jobs" list, and a new zero-filled dashboard chart
+(`_pipeline_stage_distribution`, mirroring the existing tier-distribution aggregation) —
+deliberately using a separate, non-tier hue family for the badge (slate → sky → blue → violet
+→ amber → emerald), since stage and tier answer different questions and mixing their palettes
+would read as "how good" when it means "how far along." No kanban board, no cross-job pipeline
+overview page, no decline-reason taxonomy — each confirmed absent from the current UI/roadmap
+and scoped out as its own future effort, not a silent omission.
+
+## 36. Fact-checking the stakeholder review against the current code
+
+Before picking the next items off the review, every remaining finding was re-verified against
+the live codebase rather than taken on faith — the review itself was already a few days old
+by the time work resumed on it. One finding turned out to be stale: "registration is
+unauthenticated and unlimited" was true of no version of this codebase — `POST /auth/register`
+has 403'd any registration attempt once one account exists since the *initial commit*, before
+this session's own localhost-binding work and before the review was even written. That
+correction reframed two other findings: governance's "no per-account data isolation" and "no
+audit trail of who touched what" both assume a threat model — multiple people sharing one
+running instance — that the single-account cap already forecloses by design, and that the
+confirmed one-instance-per-laptop deployment model doesn't call for regardless. Treated as not
+applicable under the current model, not merely deferred.
+
+The two items that survived the fact-check as real, standalone gaps, independent of the
+multi-tenancy question either way: no way to delete a single candidate's PII (only a
+wipe-everything "danger zone"), and no consent step before real-LLM mode starts sending resume
+text to a third-party API. See section 37.
+
+## 37. Per-candidate PII deletion, a real-LLM consent gate, and a QA-caught orphan-file bug
+
+**Per-candidate delete.** New `DELETE /candidates/{id}` (204) — a real, irreversible delete,
+not a soft-delete, since the entire point is honoring a genuine right-to-erasure request
+without wiping every other candidate the way the existing danger-zone "CLEAR" does. Removes
+the on-disk mirror (resume file, `profile_summary.md`, `meta.json`) before the DB row, verified
+against `meta.json`'s own `candidate_id` before touching anything, and deletes only files it
+can name — never an `rmtree`. `Match` and `ResumeSource` rows cascade automatically through
+the ORM's existing `delete-orphan` relationships (no manual per-table deletes needed, unlike
+`clear_data`). Frontend: a per-candidate danger-zone card on Candidate Detail, adapted
+directly from the existing typed-`"CLEAR"`-confirmation pattern (`components/scan/danger-zone.tsx`),
+using `"DELETE"` instead — no Undo affordance, since an undo would mean the data wasn't
+actually erased.
+
+QA found a real bug in the mirror cleanup on its first pass: two resume submissions on the
+same day for the same candidate land in the *same* mirror directory (`mirror_writer.py` keys
+the directory on candidate + date, not per-submission) — with different file extensions, that
+directory holds two resume files (`resume.pdf`, `resume.docx`) sharing one `meta.json`. The
+original per-source deletion loop deleted `meta.json` while handling the first source sharing
+that directory, then re-read it to safety-check the second source pointing at the same
+directory, found it already gone, and defensively skipped — silently orphaning a file
+containing the candidate's real name and email in a directory the app no longer tracked
+anywhere. QA reproduced this against the app's own real data on a second random pick, not a
+constructed edge case. Fixed by grouping sources by target directory first, reading
+`meta.json` once per directory before deleting anything in it, then deleting every resume file
+in that group together — confirmed via a regression test seeding the exact shape (fails
+against the pre-fix code, passes after), and reproduced live a second time against real
+sample-data-generated files to confirm the fix.
+
+**Real-LLM consent gate.** New `User.real_llm_consent_given_at` — a one-time acknowledgment,
+before real-LLM mode is ever switched on, that resume text and job descriptions leave the
+machine for a third-party API. Persisted on `User` deliberately, not in `app/runtime_settings.py`
+(which is explicitly in-memory-only by design, so the mock/real toggle itself keeps resetting
+to mock on every backend restart) — re-asking for consent on every restart would be
+user-hostile for something that only needs saying once. `PATCH /settings/mock-mode` 428s the
+first time real mode is requested without `consent_ack: true`; once given, never re-checked.
+New `LlmConsentModal` (built on the existing generic `Modal` component) intercepts the toggle
+client-side before the API call ever fires. Live-verified the full state machine, including a
+real backend restart: `use_mock_llm` resets to `true` afterward exactly as designed, while
+`real_llm_consent_given` stays `true` — no re-prompt.
+
+Both landed with the same verification discipline as every round before: an isolated instance
+seeded via the app's own sample-data generator and a real matching run, never against the real
+`:8000` instance or its database; 169/169 backend tests passing after the fix (163 before the
+regression test was added); the real instance's health and `.env` confirmed unchanged
+throughout.
 
 ## Cross-references
 

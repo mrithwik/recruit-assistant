@@ -10,6 +10,7 @@ against job descriptions with LLM scoring, and helps a recruiter act on the resu
 | Document | Purpose |
 |----------|---------|
 | [How It Works](how-it-works.html) | Illustrated, plain-language walkthrough — start here if you're non-technical or just want the big picture visually |
+| [Architecture Diagrams](architecture-diagram.html) | System topology, ER diagram, and sequence diagrams — engineer-facing, not narrative |
 | [System Overview](system-overview.md) | High-level architecture, tech stack, repo structure |
 | [Backend Architecture](backend-architecture.md) | FastAPI app internals: scanning, matching, storage, DI |
 | [Frontend Architecture](frontend-architecture.md) | React SPA: nav, pages, stores, API client |
@@ -17,6 +18,7 @@ against job descriptions with LLM scoring, and helps a recruiter act on the resu
 | [Data Flow](data-flow.md) | Ingestion, matching, and draft-email sequence diagrams |
 | [Design Decisions](design-decisions.md) | ADRs — why things are built this way |
 | [Project Log](project-log.md) | Chronological history — every planning decision and build phase |
+| [Testing Report](testing-report.md) | Every QA round — findings, verification method, fixes |
 | [Getting Started](getting-started.md) | Setup guide, mock mode, OAuth app registration |
 | [Infrastructure](infrastructure.md) | Local run modes, data layout, path to production |
 
@@ -45,3 +47,4 @@ storage backends, or API contracts change materially; not for typo fixes or adde
 | Version | Date | Summary |
 |---------|------|---------|
 | v0 | 2026-08-01 | Initial architecture: single-process FastAPI backend, folder + email ingestion converging on one pipeline, two-stage LLM matching with judge review, React/Vite frontend with all 8 nav tabs. |
+| v0 | 2026-09-01 | Docs refreshed against everything since: single-account auth + login rate limiting, localhost-only binding by default, pipeline-stage tracking, real per-candidate PII deletion, one-time real-LLM consent gate, dashboard + maintenance + scheduler modules. Added [Architecture Diagrams](architecture-diagram.html) and [Testing Report](testing-report.md). |

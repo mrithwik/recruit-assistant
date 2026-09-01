@@ -13,7 +13,8 @@ make install-frontend   # installs frontend node_modules
 ```
 
 `.env` defaults to `USE_MOCK_LLM=true` and `USE_MOCK_EMAIL=true` — everything works with
-**zero API keys**. Both are independent and also live-toggleable from the Scan Sources page.
+**zero API keys**. Both are independent and also live-toggleable from the Scan Sources page
+(flipping LLM mode to real for the first time shows a one-time consent dialog — see step 4).
 
 ## 1. Start the backend (Terminal 1)
 
@@ -23,7 +24,10 @@ source .venv/bin/activate
 make run
 ```
 
-Wait for `Uvicorn running on http://0.0.0.0:8000`. Verify in another shell:
+Wait for `Uvicorn running on http://127.0.0.1:8000`. The backend binds to localhost only by
+default (`API_HOST` in `.env.example`), not every network interface — deliberate, see
+[architecture/design-decisions.md](architecture/design-decisions.md) ADR-010. Verify in
+another shell:
 
 ```bash
 curl http://localhost:8000/health   # -> {"status":"ok"}
@@ -38,21 +42,29 @@ make run-frontend
 
 Open **http://localhost:5173**.
 
-## 3. Walk the golden path
+## 3. Create your account and walk the golden path
 
-1. **Job Descriptions** — "+ Add another job description", give it a title and paste a JD.
-2. **Scan Sources** — under "Local folders", enter a path to a folder with a few
+The app is single-account — the first visit shows a **register** form; every visit after that
+shows **login** instead (`POST /auth/register` 403s once an account exists, by design, not a
+bug — see ADR-010). Failed logins lock that email out for 15 minutes after 5 attempts.
+
+1. **Dashboard** — empty at first; fills in as you use the app below.
+2. **Job Descriptions** — "+ Add another job description", give it a title and paste a JD.
+3. **Scan Sources** — under "Local folders", enter a path to a folder with a few
    `.pdf`/`.docx`/`.txt` resumes, then "Scan folders now". No resumes handy? Make a throwaway one:
    ```bash
    mkdir -p ~/test-resumes
    echo "Jordan Rivera, Python/FastAPI, 4 years experience" > ~/test-resumes/jordan.txt
    ```
    Then point the Scan Sources folder picker at `~/test-resumes`.
-3. **Candidate Results** — pick the job in the dropdown, click "Run matching". Color-coded
-   score badges appear; click "Details" for match reasons/gaps/missing info; try the 🟢/🔴
-   flag buttons and "Draft email".
-4. **Criteria** — see the built-in filters, add a custom one, try "Rescan".
-5. **Search History** — the matching run you just did shows up here.
+4. **Match Results** — pick the job in the dropdown, click "Run matching". Color-coded
+   score badges (quality/tier) appear alongside a separate pipeline-stage badge/dropdown
+   (status — sourced through placed/declined, independent of match quality); click "Details"
+   for match reasons/gaps/missing info; try the 🟢/🔴 flag buttons and "Draft email".
+5. **Candidate Detail** — click a candidate's name to see their full profile, notes, history,
+   source documents, and pipeline status across every job they're matched to.
+6. **Criteria** — see the built-in filters, add a custom one, try "Rescan".
+7. **Search History** — the matching run you just did shows up here.
 
 In mock mode, scores/summaries are canned (fixed ~72 score, "good_match" tier) — that's
 expected; it proves the pipeline runs end-to-end without needing API keys, not that the
@@ -67,8 +79,13 @@ USE_MOCK_LLM=false
 OPENROUTER_API_KEY=sk-or-...
 ```
 
-Restart the backend (`Ctrl+C`, then `make run` again) and re-run matching — scores/reasons
-should now be real and differentiated per resume.
+Restart the backend (`Ctrl+C`, then `make run` again). The first time you flip real mode on
+from the Scan Sources page (or restart with `USE_MOCK_LLM=false` already set), a one-time
+consent dialog explains that resume text and job descriptions will be sent to your configured
+provider — accept it once and it's remembered for this installation going forward (it's
+persisted on your account, not reset by future restarts, even though the mock/real toggle
+itself resets to mock on every restart by design). Re-run matching — scores/reasons should now
+be real and differentiated per resume.
 
 ## 5. Run the automated tests
 
@@ -76,8 +93,10 @@ should now be real and differentiated per resume.
 make test
 ```
 
-13 tests (identity resolution, tier scoring, folder ingestion, golden-set matching harness).
-To also check live-model scores land in the expected tier bands:
+169 tests as of this writing (auth, rate limiting, identity resolution, tier + pipeline-stage
+scoring, folder/email ingestion, per-candidate deletion incl. on-disk mirror cleanup, mock-mode
+consent gate, dashboard aggregation, golden-set matching harness). To also check live-model
+scores land in the expected tier bands:
 
 ```bash
 RUN_LIVE_GOLDEN=true OPENROUTER_API_KEY=sk-or-... make test
@@ -136,3 +155,21 @@ lsof -ti :5173 | xargs kill -9   # frontend
 - **Email Access tab errors on connect** — expected until you register an OAuth app; see
   [architecture/getting-started.md](architecture/getting-started.md#5-enable-email-scanning-gmail--outlook-oauth).
   Folder scanning works independently of email setup.
+- **"Invalid or expired session" / repeatedly bounced to login** — the login lockout is
+  per-email, 5 failed attempts, 15 minutes; wait it out or double-check the password.
+- **Flipping real LLM mode on does nothing / a dialog appears instead** — expected the first
+  time only, see step 4 above; it's a one-time consent step, not a bug.
+
+## Roadmap / what's next
+
+- **Speed** — mailbox scanning and LLM matching both have known, unimplemented optimizations
+  (parallelizing the per-resume ingest loop, offloading blocking parse/OCR work, retry/backoff
+  + higher LLM concurrency, reusing the existing semantic summary instead of full resume text
+  in scoring prompts). Fully mapped, not yet built.
+- **A locally-hosted, recruiting-fine-tuned LLM** — long-term: replacing or supplementing the
+  OpenRouter/OpenAI real-mode path with a small open-source model fine-tuned specifically for
+  resume/JD scoring, run locally, to cut real-mode LLM cost toward zero for an established
+  installation. Not yet scoped — would need a training-data plan (this app's own judge-verified
+  match history is a plausible source), a decision on model size vs. laptop-hardware
+  feasibility, and a quality bar to clear before it could replace OpenRouter's frontier models
+  as the default rather than an opt-in alternative.
