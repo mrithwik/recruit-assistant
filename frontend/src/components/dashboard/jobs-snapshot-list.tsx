@@ -6,9 +6,12 @@ import { EmptyState } from "../ui/empty-state";
 
 const PAGE_SIZE = 5;
 
-// Active jobs are capped at 10 (see routes/jobs.py), so the full snapshot
-// list is already in `jobs` — no server round-trip needed, unlike
-// ActivityFeed's page-past-the-summary pattern for an unbounded log.
+// Jobs have no creation cap (routes/jobs.py is explicit about this) and
+// dashboard/service.py's _jobs_snapshot already returns every active job,
+// uncapped, in the one dashboard summary response — so the full list is
+// always already in `jobs` and pagination here is purely a client-side
+// slice, no separate paginated endpoint needed the way ActivityFeed's
+// page-past-the-summary pattern is for its genuinely unbounded log.
 export function JobsSnapshotList({ jobs }: { jobs: JobSnapshot[] }) {
   const [page, setPage] = useState(0);
   const totalPages = Math.max(1, Math.ceil(jobs.length / PAGE_SIZE));

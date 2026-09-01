@@ -21,7 +21,7 @@ All routes except `GET /health` and the `auth` routes below require `Authorizati
 |---|---|---|
 | GET | `/jobs` | List active jobs, newest first |
 | GET | `/jobs/inactive` | List soft-deleted jobs |
-| POST | `/jobs` | `{title, company, raw_text}` — 400 if 10 active jobs already exist |
+| POST | `/jobs` | `{title, company, raw_text}` — no cap on job count; search/pagination are client-side |
 | DELETE | `/jobs/{id}` | Soft-delete (`active = false`) — doesn't touch matches/history |
 | POST | `/jobs/{id}/reactivate` | Undoes a soft-delete |
 | POST | `/jobs/bulk-delete` | `{job_ids}` — same soft-delete, bulk |
