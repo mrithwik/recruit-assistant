@@ -95,6 +95,7 @@ async def rescan_candidate_sources(
             summary_model=settings.llm_scoring_model,
             embedding_model=settings.embedding_model,
             max_concurrent_embeddings=settings.max_concurrent_llm_calls,
+            max_concurrent_processing=settings.max_concurrent_llm_calls,
             on_progress=on_progress,
         )
         combined.resumes_found += result.resumes_found
@@ -128,6 +129,7 @@ async def rescan_candidate_sources(
             summary_model=settings.llm_scoring_model,
             embedding_model=settings.embedding_model,
             max_concurrent_embeddings=settings.max_concurrent_llm_calls,
+            max_concurrent_processing=settings.max_concurrent_llm_calls,
             on_progress=on_progress,
         )
         combined.resumes_found += result.resumes_found

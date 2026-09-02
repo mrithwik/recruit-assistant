@@ -154,6 +154,38 @@ async def test_checkpoint_commits_survive_a_later_mid_scan_failure(storage, mock
     assert len(candidates) == 4
 
 
+async def test_cancelling_mid_batch_still_applies_the_rest_of_that_batch(storage, mock_llm, tmp_path):
+    """QA regression: run_scan's own comment says cancelling mid-batch still
+    applies the rest of the *current* batch's already-parsed items (Phase 1's
+    parse+summarize work for them is already done and paid for — discarding
+    it would waste it for nothing), only skipping any *further* batches. The
+    first version of this code `break`d out of the batch immediately instead,
+    contradicting its own comment and throwing away already-completed work.
+    With max_concurrent_processing left at its default (8) and 12 resumes
+    offered, cancellation requested after the 3rd resume in the first batch
+    should still land all 8 of that batch's candidates — not just 3 — and
+    the second batch (resumes 8-11) should never be fetched at all."""
+    calls = {"count": 0}
+
+    def cancel_after_three() -> bool:
+        calls["count"] += 1
+        return calls["count"] > 3
+
+    with storage.session() as session:
+        result = await run_scan(
+            ingestor=_MultiDistinctIngestor(count=12),
+            storage=storage,
+            session=session,
+            candidates_dir=tmp_path,
+            llm=mock_llm,
+            summary_model="",
+            on_should_cancel=cancel_after_three,
+        )
+
+    assert result.resumes_found == 8  # the whole first batch, not just 3
+    assert result.candidates_created == 8
+
+
 async def test_scan_result_reports_per_stage_timings(storage, mock_llm, tmp_path):
     """ScanResult.stage_timings — added so the speed-plan report's levers
     can be measured instead of only inferred from code structure. All three

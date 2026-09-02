@@ -194,6 +194,7 @@ async def scan_folders(
                     date_start=payload.date_start,
                     date_end=payload.date_end,
                     max_concurrent_embeddings=settings.max_concurrent_llm_calls,
+                    max_concurrent_processing=settings.max_concurrent_llm_calls,
                     on_progress=lambda r: update_progress(job.id, r),
                     on_should_cancel=lambda: is_cancel_requested(job.id),
                 )
@@ -301,6 +302,7 @@ async def scan_email_accounts(
                         date_start=payload.date_start,
                         date_end=payload.date_end,
                         max_concurrent_embeddings=settings.max_concurrent_llm_calls,
+                        max_concurrent_processing=settings.max_concurrent_llm_calls,
                         on_progress=_on_progress,
                         on_should_cancel=lambda: is_cancel_requested(job.id),
                     )
@@ -374,6 +376,7 @@ async def scan_all(
                         summary_model=settings.llm_scoring_model,
                         embedding_model=settings.embedding_model,
                         max_concurrent_embeddings=settings.max_concurrent_llm_calls,
+                        max_concurrent_processing=settings.max_concurrent_llm_calls,
                         on_progress=lambda r: update_progress(job.id, r),
                         on_should_cancel=lambda: is_cancel_requested(job.id),
                     )
@@ -408,6 +411,7 @@ async def scan_all(
                         summary_model=settings.llm_scoring_model,
                         embedding_model=settings.embedding_model,
                         max_concurrent_embeddings=settings.max_concurrent_llm_calls,
+                        max_concurrent_processing=settings.max_concurrent_llm_calls,
                         on_progress=lambda r: update_progress(job.id, r),
                         on_should_cancel=lambda: is_cancel_requested(job.id),
                     )

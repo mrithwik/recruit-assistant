@@ -66,6 +66,7 @@ async def _run_nightly_scan(storage: BaseStorageBackend, llm: LLMClient, setting
                     summary_model=settings.llm_scoring_model,
                     embedding_model=settings.embedding_model,
                     max_concurrent_embeddings=settings.max_concurrent_llm_calls,
+                    max_concurrent_processing=settings.max_concurrent_llm_calls,
                 )
                 source.last_run_at = datetime.utcnow()
                 if source.kind == "email_account" and account:

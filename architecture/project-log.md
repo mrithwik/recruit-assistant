@@ -1279,6 +1279,96 @@ real-world margin above the rounding threshold, stress-tested 15/15 clean afterw
 backend tests passing, stable across repeated full-suite runs, same 3 pre-existing unrelated
 failures throughout this whole stretch of work.
 
+## 42. Speed plan, step 2 — parallelizing the ingest loop and offloading blocking work (levers 01+02)
+
+Following the speed-plan report's #1 and #2 levers together, since #2 (offload blocking
+CPU/disk work off the event loop) is what actually lets #1 (parallelize the per-resume loop)
+deliver real overlap rather than just interleaved-but-still-blocking coroutines.
+
+**Lever 02, self-contained first.** `parser.py`'s `extract_text` (pdfplumber, pypdf,
+python-docx, and worst-case a Tesseract OCR subprocess call) ran synchronously inside an
+`async def`, blocking the event loop for its full duration. Now wrapped in
+`asyncio.to_thread`. Same treatment for `mirror_writer.write_mirror`'s disk I/O at its call
+site in `ingest_service.py`.
+
+**Lever 01 — `run_scan` restructured into two phases per batch** (`max_concurrent_processing`,
+new param, defaults to 8, threaded through every call site via `settings.max_concurrent_llm_calls`
+like every other concurrency dial):
+
+- **Phase 1, concurrent** (`_parse_and_summarize`, via `bounded_gather`): parse + summarize
+  every resume in the batch at once — network/CPU-bound, independent per resume. Each worker
+  catches its own exceptions and returns them as data (`_ParsedItem.error`) rather than
+  raising, so one bad resume can't cancel its siblings mid-`asyncio.gather` the way a raised
+  exception would — preserving the isolation the old sequential per-resume try/except gave for
+  free.
+- **Phase 2, sequential, in the batch's original order**: identity resolution, mirror-writing,
+  persistence — deliberately *not* parallelized. Two resumes for the same person landing in one
+  batch must merge into the shared `fingerprints` dict in order, not race each other; two
+  same-day submissions of the same candidate can collide on the same `write_mirror` target
+  directory (see section 39's orphan-file bug) if written concurrently. `write_mirror` still
+  runs via `asyncio.to_thread` here even though it's sequential, so the event loop stays
+  responsive between writes without reintroducing that race.
+
+**Two correctness risks found and fixed before they became bugs, not after:**
+1. Within-batch duplicates (the same file yielded twice, or two same-day resubmissions) aren't
+   caught by Phase 1's dedup check (`seen_sources` isn't mutated until Phase 2) — Phase 2
+   re-checks and skips them there, which is what actually matters; confirmed unchanged by the
+   existing `test_rescan_skips_unchanged_file_instead_of_duplicating`.
+2. `_next_batch`'s first version discarded already-fetched items if the ingestor's generator
+   raised mid-batch-fill (e.g. a real mailbox exhausting retries) — losing the exact "partial
+   progress survives a mid-scan failure" guarantee `test_ingest_service.py`'s checkpoint test
+   exists to pin, since the whole point of periodic checkpointing is that a late failure
+   doesn't discard everything found before it. Caught before shipping by re-running that
+   specific test against the new code, not after: `_next_batch` now returns `(batch,
+   exception)` — already-fetched items are processed and checkpointed exactly as before, and
+   the exception is re-raised only after, matching the old sequential `async for`'s ordering
+   exactly.
+
+**New tests:** `test_ingest_concurrency.py` proves actual overlap directly (a tracking mock LLM
+client asserting `max_in_flight > 1`), independent of real wall-clock timing. Live-verified on
+an isolated instance at real volume (350 generated resumes, folder scan): `parse` stage total
+(2.53s, summed across concurrent calls) exceeded the scan's own `elapsed_seconds` (1.38s) — the
+expected signature of genuine concurrency — with a same-content rescan afterward correctly
+skipping all 350 (`duplicates_skipped: 350`, candidate count unchanged), and a mock-email scan
+of the same people afterward correctly merging into the existing candidates (0 errors either
+way).
+
+**A significant process correction, surfaced by this step's own verification.** Every "3
+pre-existing, unrelated test failures" claim made across this entire session's work (sections
+38-41) was wrong in its framing — not because the underlying code comparisons were invalid
+(each was checked apples-to-apples via git-stash red/green, which stayed valid), but because
+those 3 failures were never actually pre-existing at all: they were an artifact of running
+`pytest` from inside `backend/` instead of the project's actual canonical invocation,
+`python -m pytest backend/tests/` from the repo root (see the `Makefile`'s `test` target).
+Run correctly, the full suite has been **181 passed, 0 failed, 2 skipped** — not "177-179
+passed, 3 failed" — this whole time. Confirmed reproducibly both ways (wrong directory: 3
+failures, every time; repo root: clean, every time) before correcting the record with the
+user. Going forward, verification in this project runs `python -m pytest backend/tests/` from
+the repo root, not from inside `backend/`.
+
+## 43. Speed plan, step 2 — QA fix: cancellation discarded already-paid-for batch work
+
+QA on section 42's batching found the cancellation-handling code didn't match its own comment.
+The comment said cancelling mid-batch still applies the rest of the *current* batch's
+already-parsed items (Phase 1's parse+summarize work for them is done and paid for —
+discarding it wastes it for nothing in mock mode, and wastes real spend in real-LLM mode) and
+only skips *further* batches. The code instead `break`d out of the batch's Phase 2 loop the
+moment cancellation was detected, throwing away the rest of that batch's already-completed
+work. Not a data-integrity bug (nothing inconsistent was ever written), but a real regression
+against the old one-at-a-time loop's behavior, and a comment actively misleading the next
+reader. QA reproduced it directly: cancelling after 3 of 10 resumes in one batch left only 3
+persisted, the other 7's already-done parse+summarize work discarded.
+
+Fixed by making the code match the comment (the comment's reasoning was correct) rather than
+watering the comment down: the cancel-check now only sets `cancelled = True` without a
+`break`, so Phase 2's inner loop runs to completion over the rest of the current batch, and
+only the outer `while not cancelled:` stops pulling further batches. New regression test
+(`test_cancelling_mid_batch_still_applies_the_rest_of_that_batch`) is fully deterministic — a
+plain counting callback, not real timing — and confirmed to fail against the pre-fix `break`
+(4 resumes landed, not the expected 8) before passing after. 182 backend tests passing (181 +
+this one), 0 failures, stable across repeated runs — see section 42 for the
+`python -m pytest backend/tests/`-from-repo-root correction this count now reflects correctly.
+
 ## Cross-references
 
 - [Design Decisions](design-decisions.md) — the ADRs behind each choice above

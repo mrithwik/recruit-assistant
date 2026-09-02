@@ -5,6 +5,7 @@ PDFs, unusual formatting). Output is always a CandidateProfile — this is what
 both matching and the "missing info" flag (2.5) key off of.
 """
 
+import asyncio
 import io
 import re
 
@@ -125,7 +126,12 @@ def _regex_fallback(text: str) -> dict:
 
 
 async def parse_resume(file_bytes: bytes, filename: str, llm: LLMClient) -> CandidateProfile:
-    text = extract_text(file_bytes, filename)
+    # extract_text is synchronous CPU/disk-bound work (pdfplumber, pypdf,
+    # python-docx, and worst-case a Tesseract OCR subprocess call) — run on
+    # a worker thread so it doesn't block the event loop while it runs, and
+    # so multiple resumes' extraction can genuinely overlap when ingest
+    # processes them concurrently (see run_scan's batched processing).
+    text = await asyncio.to_thread(extract_text, file_bytes, filename)
     regex_hints = _regex_fallback(text)
 
     if len(text.strip()) < MIN_VIABLE_TEXT_LENGTH:
