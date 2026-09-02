@@ -1445,6 +1445,44 @@ Both confirmed to fail against the pre-fix poison-pill version before passing af
 backend tests passing (185 + 2 new), 0 failures, stable across 3 repeated runs. Live-verified
 the normal (non-failing) single-account path is unaffected.
 
+## 46. Speed plan, step 4a — retry-with-backoff on the LLM client (not raising the cap)
+
+The last item off the speed-plan report that doesn't need a research decision first (lever
+04a specifically, not 04b — raising `max_concurrent_llm_calls` itself still depends on the
+user's actual OpenRouter/OpenAI rate-limit headroom, an open question, so the dial itself
+wasn't touched). `OpenRouterClient`/`OpenAIClient` had zero retry logic — a single 429/5xx
+failed the call outright, and for `OpenRouterClient` specifically, immediately fell through to
+the OpenAI fallback rather than giving the primary provider a chance to recover from what's
+often a transient blip.
+
+Added `_post_with_retry` (`matching/llm_client.py`), mirroring the existing
+`scanning/email_ingestor.py::get_with_retry` pattern already used for Gmail/Outlook fetches
+(exponential backoff capped at 30s, 6 attempts, non-retryable 4xx raises immediately) — same
+reasoning, applied to the scoring/embedding calls instead of the mailbox-fetch ones. Used by
+both `OpenRouterClient` and `OpenAIClient`'s `complete()`/`embed()`. Retries happen *inside*
+`OpenRouterClient`'s existing try/except, so the fallback path only triggers once retries are
+truly exhausted, not on the first blip.
+
+Seven new tests (`test_llm_client_retry.py`) prove: 429/5xx retried then succeeding; a
+non-retryable 4xx (401) raising immediately without any retry; persistent 429s exhausting all
+attempts and raising; `OpenRouterClient` recovering from a transient 429 on retry *without*
+touching its fallback (a fallback that asserts it was never called); `OpenRouterClient` still
+falling back once retries are truly exhausted; `OpenAIClient` getting the same retry treatment.
+Confirmed to fail against the pre-fix code (reverted to the last commit, `_post_with_retry`
+didn't exist) before passing after. 194 backend tests passing (187 + 7 new), 0 failures, stable
+across 3 repeated runs.
+
+This only matters in real-LLM mode — no live network-level verification was possible in this
+environment (no real OpenRouter/OpenAI credentials configured), so verification stopped at
+exercising the actual production `OpenRouterClient`/`OpenAIClient` code paths against a
+scripted fake HTTP client returning real status codes, the closest available substitute.
+
+With this, every speed-plan lever startable without a research decision (instrumentation,
+01, 02, 03, 04a) is done. Remaining items — raising the concurrency cap (04b), summary-vs-raw-
+text scoring (05), the dead `LLM_TRIAGE_MODEL` config (06), the shortlist multiplier (07),
+batched multi-candidate scoring (08) — all wait on the user's answers to the report's open
+questions.
+
 ## Cross-references
 
 - [Design Decisions](design-decisions.md) — the ADRs behind each choice above

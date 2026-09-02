@@ -8,6 +8,7 @@ Swapping/adding a provider (e.g. Anthropic direct) means one new adapter, not
 changes to every call site.
 """
 
+import asyncio
 import json
 import re
 from abc import ABC, abstractmethod
@@ -16,6 +17,35 @@ import httpx
 
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 OPENAI_BASE_URL = "https://api.openai.com/v1"
+
+
+async def _post_with_retry(
+    client: httpx.AsyncClient, path: str, json_body: dict, max_attempts: int = 6
+) -> httpx.Response:
+    """429/5xx retry with exponential backoff — mirrors
+    scanning/email_ingestor.py's get_with_retry (same reasoning, applied to
+    the scoring/embedding calls instead of the mailbox-fetch ones): a real
+    matching or ingest run makes many concurrent LLM calls (see
+    max_concurrent_llm_calls), so an occasional rate-limit or transient
+    server error is expected, not exceptional — without this, a single
+    429/5xx failed a whole deep-score/judge/embed call outright (and, for
+    OpenRouterClient, immediately fell through to the fallback provider
+    rather than just retrying the primary one first). A non-retryable
+    error (any other 4xx) still raises immediately, and the final attempt
+    always raises rather than retrying forever."""
+    backoff = 1.0
+    for attempt in range(max_attempts):
+        resp = await client.post(path, json=json_body)
+        if resp.status_code == 429 or resp.status_code >= 500:
+            if attempt == max_attempts - 1:
+                resp.raise_for_status()
+            await asyncio.sleep(backoff)
+            backoff = min(backoff * 2, 30)
+            continue
+        resp.raise_for_status()
+        return resp
+    resp.raise_for_status()
+    return resp
 
 
 class LLMClient(ABC):
@@ -48,11 +78,11 @@ class OpenRouterClient(LLMClient):
             messages = ([{"role": "system", "content": system}] if system else []) + [
                 {"role": "user", "content": prompt}
             ]
-            resp = await self._client.post(
+            resp = await _post_with_retry(
+                self._client,
                 "/chat/completions",
-                json={"model": model or self.default_model, "messages": messages},
+                {"model": model or self.default_model, "messages": messages},
             )
-            resp.raise_for_status()
             return resp.json()["choices"][0]["message"]["content"]
         except Exception:
             if self.fallback:
@@ -61,8 +91,7 @@ class OpenRouterClient(LLMClient):
 
     async def embed(self, model: str, text: str) -> list[float]:
         try:
-            resp = await self._client.post("/embeddings", json={"model": model, "input": text})
-            resp.raise_for_status()
+            resp = await _post_with_retry(self._client, "/embeddings", {"model": model, "input": text})
             return resp.json()["data"][0]["embedding"]
         except Exception:
             if self.fallback:
@@ -86,14 +115,12 @@ class OpenAIClient(LLMClient):
             {"role": "user", "content": prompt}
         ]
         model = model.split("/")[-1] if model else self.default_model
-        resp = await self._client.post("/chat/completions", json={"model": model, "messages": messages})
-        resp.raise_for_status()
+        resp = await _post_with_retry(self._client, "/chat/completions", {"model": model, "messages": messages})
         return resp.json()["choices"][0]["message"]["content"]
 
     async def embed(self, model: str, text: str) -> list[float]:
         model = model.split("/")[-1] if model else "text-embedding-3-small"
-        resp = await self._client.post("/embeddings", json={"model": model, "input": text})
-        resp.raise_for_status()
+        resp = await _post_with_retry(self._client, "/embeddings", {"model": model, "input": text})
         return resp.json()["data"][0]["embedding"]
 
 
