@@ -152,3 +152,28 @@ async def test_checkpoint_commits_survive_a_later_mid_scan_failure(storage, mock
     # fire after resume counts 2 and 4, so all 4 already-processed
     # candidates should be durably committed despite the run never finishing.
     assert len(candidates) == 4
+
+
+async def test_scan_result_reports_per_stage_timings(storage, mock_llm, tmp_path):
+    """ScanResult.stage_timings — added so the speed-plan report's levers
+    can be measured instead of only inferred from code structure. All three
+    ingest-loop stages should show non-trivial time spent (mock LLM calls
+    and disk writes still take real wall-clock time, just no network)."""
+    ingestor = _RepeatingFolderIngestor()
+    with storage.session() as session:
+        result = await run_scan(
+            ingestor=ingestor,
+            storage=storage,
+            session=session,
+            candidates_dir=tmp_path,
+            llm=mock_llm,
+            summary_model="",
+        )
+
+    assert set(result.stage_timings) == {"parse", "summarize", "mirror_write", "embed"}
+    assert result.stage_timings["parse"] >= 0
+    assert result.stage_timings["summarize"] >= 0
+    assert result.stage_timings["mirror_write"] >= 0
+    # No embedding_model was passed, so nothing should have been queued for
+    # the embed stage — it should stay at its zero default, not error.
+    assert result.stage_timings["embed"] == 0

@@ -118,6 +118,7 @@ async def run_matching(
                     )
                     return
 
+                embed_start = time.monotonic()
                 job_embedding = await llm.embed(settings.embedding_model, job_raw_text)
 
                 # Candidates ingested after the embedding-cache change (see
@@ -138,6 +139,10 @@ async def run_matching(
                     for c in needs_embedding:
                         c.embedding = embedding_by_id[c.id]
                     session.flush()
+                # Unrounded — rounded once, below, when the final ScanResult
+                # is built (see routes/scan.py's _round_stage_timings for
+                # why rounding before a sum is wrong).
+                embed_seconds = time.monotonic() - embed_start
 
                 # Cancellation can only be checked between phases, not mid
                 # concurrent-gather (match_job_against_pool scores the whole
@@ -163,7 +168,7 @@ async def run_matching(
                     for c in candidates
                 ]
 
-                results = await match_job_against_pool(
+                results, match_stage_timings = await match_job_against_pool(
                     llm=llm,
                     triage_model=settings.llm_triage_model,
                     scoring_model=settings.llm_scoring_model,
@@ -215,6 +220,14 @@ async def run_matching(
                     candidates_created=matched_count,
                     candidates_updated=0,
                     duplicates_skipped=0,
+                    # Rounded here, once, now that nothing sums these
+                    # further — summing already-rounded per-call numbers can
+                    # quantize real small work down to a false 0.00 (see
+                    # routes/scan.py's _merge_stage_timings for the same
+                    # issue on the multi-source scan routes).
+                    stage_timings={
+                        k: round(v, 2) for k, v in {"embed": embed_seconds, **match_stage_timings}.items()
+                    },
                 ),
             )
         except Exception as exc:  # noqa: BLE001 - surfaced via job status, not raised into a dead background task

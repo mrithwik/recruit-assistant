@@ -112,6 +112,12 @@ async def run_scan(
     updated = 0
     skipped = 0
     errors: list[str] = []
+    # Total wall-clock seconds per stage, across every resume — see
+    # ScanResult.stage_timings and the speed-plan report's "instrument
+    # first" recommendation. Not mutually exclusive with elapsed_seconds:
+    # this loop is still sequential per-resume today, so these stages don't
+    # overlap each other, but they will once the loop is parallelized.
+    stage_timings: dict[str, float] = {"parse": 0.0, "summarize": 0.0, "mirror_write": 0.0, "embed": 0.0}
     # (candidate, text) pairs needing an embedding, collected during the loop
     # and computed afterward in one bounded-concurrency pass instead of one
     # sequential `await llm.embed()` per resume — see module docstring. If two
@@ -130,11 +136,13 @@ async def run_scan(
 
     async def _flush_checkpoint() -> None:
         if pending_embeddings:
+            embed_start = time.monotonic()
             embeddings = await bounded_gather(
                 pending_embeddings,
                 lambda pair: llm.embed(embedding_model, pair[1]),
                 max_concurrent_embeddings,
             )
+            stage_timings["embed"] += time.monotonic() - embed_start
             for (candidate, _text), embedding in zip(pending_embeddings, embeddings):
                 candidate.embedding = embedding
             pending_embeddings.clear()
@@ -151,7 +159,9 @@ async def run_scan(
                 skipped += 1
                 continue
 
+            stage_start = time.monotonic()
             profile = await parse_resume(ingested.file_bytes, ingested.filename, llm)
+            stage_timings["parse"] += time.monotonic() - stage_start
             if not profile.email and ingested.sender_email:
                 profile.email = ingested.sender_email
 
@@ -164,7 +174,9 @@ async def run_scan(
             candidate: Candidate = merge_into_candidate(existing, profile, fingerprint)
             if is_new:
                 candidate.date_submitted = ingested.date_submitted
+            stage_start = time.monotonic()
             candidate.semantic_summary = await summarize_candidate(llm, summary_model, profile.raw_text)
+            stage_timings["summarize"] += time.monotonic() - stage_start
             candidate.history = _append_history_entry(candidate, ingested, is_new, prior_skills, prior_years)
             if embedding_model:
                 # Computed once at ingest time and cached on the row so
@@ -174,6 +186,7 @@ async def run_scan(
                 # pending_embeddings above).
                 pending_embeddings.append((candidate, profile.raw_text or candidate.semantic_summary))
 
+            stage_start = time.monotonic()
             file_path = write_mirror(
                 candidates_dir=candidates_dir,
                 candidate_id=candidate.id,
@@ -185,6 +198,7 @@ async def run_scan(
                 source_ref=ingested.source_ref,
                 semantic_summary=candidate.semantic_summary,
             )
+            stage_timings["mirror_write"] += time.monotonic() - stage_start
             candidate.primary_file_path = file_path
 
             # No flush here — the object's id is already a client-generated
@@ -226,6 +240,16 @@ async def run_scan(
                         duplicates_skipped=skipped,
                         errors=list(errors),
                         elapsed_seconds=round(time.monotonic() - start_time, 2),
+                        # Deliberately unrounded — a caller combining
+                        # several run_scan() calls (scan_email_accounts,
+                        # scan_all) sums these; rounding here first can
+                        # quantize a real but small per-call time down to
+                        # 0.00, and several 0.00s still sum to 0.00 even
+                        # though real work happened (see QA finding).
+                        # Rounded once, at the point a ScanResult is
+                        # actually handed to a job as its final/displayed
+                        # state — see routes/scan.py's _round_stage_timings.
+                        stage_timings=dict(stage_timings),
                     )
                 )
             if resumes_found % checkpoint_every == 0:
@@ -246,4 +270,6 @@ async def run_scan(
         duplicates_skipped=skipped,
         errors=errors,
         elapsed_seconds=round(time.monotonic() - start_time, 2),
+        # Unrounded — see the on_progress ScanResult above for why.
+        stage_timings=stage_timings,
     )

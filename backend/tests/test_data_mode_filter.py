@@ -122,6 +122,10 @@ def test_run_matching_scopes_candidate_pool_by_data_mode(client):
     assert resp.status_code == 202
     job = _wait_for_job(client, headers, resp.json()["id"])
     assert job["status"] == "completed"
+    # stage_timings — added for the speed-plan report's "instrument first"
+    # recommendation; confirms a real run through the route (not just the
+    # matcher function directly) actually reports per-stage time.
+    assert set(job["result"]["stage_timings"]) == {"embed", "deep_score", "judge"}
 
     matches_resp = client.get(f"/api/v1/matches/{job_id}", headers=headers)
     matched_ids = {m["candidate"]["id"] for m in matches_resp.json()["matches"]}

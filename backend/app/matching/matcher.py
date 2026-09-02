@@ -9,6 +9,8 @@ Two-stage matching pipeline + LLM-as-judge (requirement 7):
 Tiers map straight to the color bands in the Candidate Results UI (2.5).
 """
 
+import time
+
 from app.matching.concurrency import bounded_gather
 from app.matching.embeddings import top_n_by_similarity
 from app.matching.llm_client import LLMClient
@@ -77,10 +79,13 @@ async def match_job_against_pool(
     candidate_pool: list[dict],  # [{id, embedding, resume_text, profile}]
     top_n: int,
     max_concurrent: int = DEFAULT_MAX_CONCURRENT_LLM_CALLS,
-) -> list[dict]:
-    """Returns scored results for up to top_n * SHORTLIST_MULTIPLIER candidates,
-    deep-scored and judge-reviewed where warranted. Caller persists Match rows
-    and trims to top_n for display.
+) -> tuple[list[dict], dict[str, float]]:
+    """Returns (scored results, stage_timings) — up to top_n * SHORTLIST_MULTIPLIER
+    candidates, deep-scored and judge-reviewed where warranted. Caller persists
+    Match rows and trims to top_n for display. stage_timings feeds
+    ScanResult.stage_timings (see the speed-plan report's "instrument first"
+    recommendation) — "deep_score" and "judge" are each one bounded_gather
+    pass's wall-clock time, not a per-candidate sum.
 
     Deep-scoring and judging each run as one bounded-concurrency pass (via
     bounded_gather) instead of a single sequential loop — at top_n=20 /
@@ -96,7 +101,9 @@ async def match_job_against_pool(
         score_result = await deep_score(llm, scoring_model, job_text, c["resume_text"], c["profile"])
         return {"candidate": c, "score_result": score_result}
 
+    deep_score_start = time.monotonic()
     scored = await bounded_gather(shortlist, _score_one, max_concurrent)
+    deep_score_seconds = time.monotonic() - deep_score_start
 
     def _needs_judgment(entry: dict) -> bool:
         score = float(entry["score_result"].get("score", 0))
@@ -109,7 +116,9 @@ async def match_job_against_pool(
         judgment = await judge_score(llm, judge_model, job_text, c.get("summary", ""), score_result)
         return judgment
 
+    judge_start = time.monotonic()
     judgments = await bounded_gather(borderline, _judge_one, max_concurrent)
+    judge_seconds = time.monotonic() - judge_start
     judgments_by_candidate_id = {
         entry["candidate"]["id"]: judgment for entry, judgment in zip(borderline, judgments)
     }
@@ -137,4 +146,7 @@ async def match_job_against_pool(
             }
         )
     results.sort(key=lambda r: r["score"], reverse=True)
-    return results
+    # Unrounded — the caller may still be combining this with other timing
+    # sources before display; round once, at the point it's finally shown.
+    stage_timings = {"deep_score": deep_score_seconds, "judge": judge_seconds}
+    return results, stage_timings

@@ -234,6 +234,13 @@ class ScanResult(BaseModel):
     duplicates_skipped: int = 0
     errors: list[str] = Field(default_factory=list)
     elapsed_seconds: float = 0.0
+    # Total wall-clock seconds spent in each named pipeline stage across the
+    # whole run (e.g. "parse", "summarize", "mirror_write" for a scan;
+    # "embed", "deep_score", "judge" for a match run) — see the speed-plan
+    # report's "instrument first" recommendation. Empty for job types that
+    # don't report per-stage timing yet. Stages can run concurrently with
+    # each other (bounded_gather), so these don't sum to elapsed_seconds.
+    stage_timings: dict[str, float] = Field(default_factory=dict)
 
 
 class ScanJobOut(BaseModel):

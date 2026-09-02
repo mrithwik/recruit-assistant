@@ -121,6 +121,38 @@ def record_ingest_scan(storage: BaseStorageBackend, session, origin: str, source
     )
 
 
+def _merge_stage_timings(*timings: dict[str, float]) -> dict[str, float]:
+    """Sums per-stage seconds across multiple ScanResults — used wherever a
+    route loops over several sources (accounts, folders) and combines their
+    individual run_scan() results into one, so ScanResult.stage_timings
+    doesn't get silently dropped the way the other accumulated fields
+    aren't (see QA finding on the scan-instrumentation work: combined only
+    summed resumes_found/candidates_created/etc., never stage_timings).
+
+    Deliberately unrounded: each input dict is already unrounded (run_scan
+    stopped rounding its own stage_timings for exactly this reason), and
+    summing already-rounded per-call numbers can quantize real-but-small
+    work down to a false 0.00 that then propagates through every further
+    merge (see QA finding — a two-account scan where each account's real
+    parse time individually rounded to 0.00 summed to a 0.00 total that hid
+    real, confirmed-happened work). Round once, at the point the result is
+    finally handed to a job as its displayed state — see
+    _round_stage_timings."""
+    merged: dict[str, float] = {}
+    for t in timings:
+        for key, value in t.items():
+            merged[key] = merged.get(key, 0.0) + value
+    return merged
+
+
+def _round_stage_timings(timings: dict[str, float]) -> dict[str, float]:
+    """Rounds stage_timings for display — call this exactly once, at the
+    point a ScanResult is handed to complete_job/update_progress as a job's
+    outward-facing state, never before or in between accumulation steps.
+    See _merge_stage_timings for why early rounding is wrong."""
+    return {k: round(v, 2) for k, v in timings.items()}
+
+
 def _job_out(job) -> ScanJobOut:
     return ScanJobOut(
         id=job.id,
@@ -167,6 +199,7 @@ async def scan_folders(
                 )
                 record_ingest_scan(storage, session, "folder", ", ".join(payload.folder_paths), result)
                 session.commit()
+            result.stage_timings = _round_stage_timings(result.stage_timings)
             complete_job(job.id, result)
         except Exception as exc:  # noqa: BLE001 - surfaced via job status, not raised into a dead background task
             fail_job(job.id, str(exc))
@@ -228,6 +261,7 @@ async def scan_email_accounts(
                     base_created = combined.candidates_created
                     base_updated = combined.candidates_updated
                     base_skipped = combined.duplicates_skipped
+                    base_stage_timings = dict(combined.stage_timings)
 
                     def _on_progress(
                         partial: ScanResult,
@@ -235,6 +269,7 @@ async def scan_email_accounts(
                         _created=base_created,
                         _updated=base_updated,
                         _skipped=base_skipped,
+                        _stage_timings=base_stage_timings,
                     ) -> None:
                         # Bound as default-arg values (not read from the
                         # enclosing scope) so this closure can't accidentally
@@ -249,6 +284,9 @@ async def scan_email_accounts(
                                 duplicates_skipped=_skipped + partial.duplicates_skipped,
                                 errors=combined.errors + partial.errors,
                                 elapsed_seconds=partial.elapsed_seconds,
+                                stage_timings=_round_stage_timings(
+                                    _merge_stage_timings(_stage_timings, partial.stage_timings)
+                                ),
                             ),
                         )
 
@@ -279,8 +317,10 @@ async def scan_email_accounts(
                     combined.duplicates_skipped += result.duplicates_skipped
                     combined.errors.extend(result.errors)
                     combined.elapsed_seconds = round(combined.elapsed_seconds + result.elapsed_seconds, 2)
+                    combined.stage_timings = _merge_stage_timings(combined.stage_timings, result.stage_timings)
                 record_ingest_scan(storage, session, "email", ", ".join(account_labels), combined)
                 session.commit()
+            combined.stage_timings = _round_stage_timings(combined.stage_timings)
             complete_job(job.id, combined)
         except Exception as exc:  # noqa: BLE001 - surfaced via job status, not raised into a dead background task
             fail_job(job.id, str(exc))
@@ -343,6 +383,7 @@ async def scan_all(
                     combined.duplicates_skipped += result.duplicates_skipped
                     combined.errors.extend(result.errors)
                     combined.elapsed_seconds += result.elapsed_seconds
+                    combined.stage_timings = _merge_stage_timings(combined.stage_timings, result.stage_timings)
 
                 for account_id in account_ids:
                     if is_cancel_requested(job.id):
@@ -378,9 +419,11 @@ async def scan_all(
                     combined.duplicates_skipped += result.duplicates_skipped
                     combined.errors.extend(result.errors)
                     combined.elapsed_seconds += result.elapsed_seconds
+                    combined.stage_timings = _merge_stage_timings(combined.stage_timings, result.stage_timings)
 
                 record_ingest_scan(storage, session, "email" if account_ids else "folder", "rescan all", combined)
                 session.commit()
+            combined.stage_timings = _round_stage_timings(combined.stage_timings)
             complete_job(job.id, combined)
         except Exception as exc:  # noqa: BLE001 - surfaced via job status, not raised into a dead background task
             fail_job(job.id, str(exc))

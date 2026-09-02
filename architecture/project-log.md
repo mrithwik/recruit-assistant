@@ -1221,6 +1221,64 @@ and the 404 only fires if *neither* found anything to remove.
 Both fixed and reproduced clean afterward (live curl + the new regression tests); 171 backend
 tests passing (169 + 2 new), same 3 pre-existing unrelated failures as section 38.
 
+## 40. Speed plan, step 1 (instrumentation) — QA fix: combined multi-source scans dropped stage_timings
+
+Following the speed-plan report (`reports/scan-match-speed-plan.md`)'s "instrument first"
+recommendation, `ScanResult` gained a `stage_timings` field and `run_scan()`/
+`match_job_against_pool()` were instrumented to populate it (parse/summarize/mirror_write/embed
+for a scan; embed/deep_score/judge for a match run) — see section 39's continuation for the
+first pass. QA found the one real gap: `POST /scan/email-accounts` and `POST /scan/all` both
+loop over multiple sources (accounts, or accounts + a known-folders pass) and build a single
+combined `ScanResult` by accumulating each call's fields — but `stage_timings` was never added
+to that accumulation, so the completed job's result silently stayed at `{}` even though every
+individual `run_scan()` call underneath computed real numbers. `/scan/all`'s live progress made
+this more visible, not less: mid-run progress passes each call's raw result straight through
+(showing correct non-zero timings), then the *completed* result reverted to `{}` once combined
+took over — worse than uniformly missing, since it looked correct while running.
+
+Fixed with one shared `_merge_stage_timings()` helper (`routes/scan.py`) that sums per-stage
+seconds across ScanResults, used everywhere `combined.X += result.X` already happens for the
+older fields, plus threaded into `scan_email_accounts`'s progress closure (which already
+carefully re-based counts/errors on each account's starting point — `stage_timings` now gets
+the same treatment, not just left as the current account's raw partial). Two new regression
+tests reproduce the QA's exact multi-source shape (two accounts scanning identical fixtures for
+`scan_email_accounts`; a folder branch that dedupes as already-seen plus a fresh email branch
+for `scan_all`) and were confirmed to fail against the pre-fix code, pass after. Live-verified
+against an isolated instance with the QA's own repro (`POST /scan/email-accounts` against the
+auto-seeded demo mailbox) — `stage_timings` came back non-zero on the completed result instead
+of `{}`. 174 backend tests passing, same 3 pre-existing unrelated failures.
+
+## 41. Speed plan, step 1 (instrumentation) — QA fix #2: rounding before summing zeroed real work
+
+A second QA pass on section 40's fix found `test_scan_all_does_not_drop_stage_timings_across_folder_and_email_branches`
+failed reliably (5/5 in isolation), traced to `run_scan()` rounding each stage's total to 2
+decimals *before* returning it — `_merge_stage_timings()` (from section 40) was summing
+already-quantized numbers, so two real-but-small per-call contributions that each
+independently round to `0.00` still sum to `0.00`, permanently losing work that genuinely
+happened. Not unrelated flakiness: this is the merge fix's own target scenario (real work
+split across multiple small combined calls) landing on the one input shape that pre-rounding
+gets wrong.
+
+Fixed by moving all rounding to a single point: `run_scan()`, `match_job_against_pool()`, and
+`routes/matches.py`'s embed-timing now all return/accumulate **raw, unrounded** floats;
+`_merge_stage_timings()` sums raw too. A new `_round_stage_timings()` helper is the only place
+rounding happens, called exactly once at each terminal point a `ScanResult` is actually handed
+to `complete_job`/`update_progress` as displayed state (`scan_folders`, both `complete_job`
+sites in `scan_email_accounts`/`scan_all`, the progress closure in `scan_email_accounts`, and
+`routes/matches.py`'s final result).
+
+Verification split in two, since QA's own root-cause diagnosis was that a live-timing test on
+a small enough workload is inherently flaky (the true, correctly-unrounded total can still
+legitimately dip under 0.005s on a fast machine — that's not a bug, just noise at trivial
+scale): a new deterministic unit test suite (`test_stage_timings_rounding.py`) proves the exact
+numeric scenario (two 0.004s contributions summing to a correctly-displayed 0.01, not a lost
+0.00) with no real timing involved, confirmed to fail before the fix (`_round_stage_timings`
+didn't exist) and pass after; the existing live integration tests
+(`test_scan_stage_timings.py`) had their sample-data volume raised (5 → 60 resumes) for
+real-world margin above the rounding threshold, stress-tested 15/15 clean afterward. 177
+backend tests passing, stable across repeated full-suite runs, same 3 pre-existing unrelated
+failures throughout this whole stretch of work.
+
 ## Cross-references
 
 - [Design Decisions](design-decisions.md) — the ADRs behind each choice above
