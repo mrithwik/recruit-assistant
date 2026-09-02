@@ -1369,6 +1369,82 @@ plain counting callback, not real timing — and confirmed to fail against the p
 this one), 0 failures, stable across repeated runs — see section 42 for the
 `python -m pytest backend/tests/`-from-repo-root correction this count now reflects correctly.
 
+## 44. Speed plan, step 3 — scanning multiple mailboxes concurrently (lever 03)
+
+`scan_email_accounts` and `scan_all`'s account loop both ran one connected mailbox's *entire*
+scan to completion before starting the next — pure wasted wall-clock time for anyone with more
+than one connected account. The report's suggested fix (run each account's `run_scan()` as a
+sibling task) turned out to have a real correctness trap the report didn't account for: running
+several `run_scan()` calls concurrently against the *same* SQLAlchemy `Session` risks both
+session corruption (overlapping `add()`/`commit()` calls) and duplicate candidates (two
+accounts yielding the same person concurrently, each independently deciding "new candidate"
+from its own stale in-memory fingerprint snapshot, since neither would see the other's
+not-yet-committed work).
+
+Solved with a new `FanInIngestor` (`scanning/fan_in_ingestor.py`) instead: wraps several
+`ResumeIngestor`s into one, running their `scan()` generators as concurrent producer tasks
+feeding a shared `asyncio.Queue`, and yielding items as they arrive — genuinely concurrent
+network fetch, feeding into exactly **one** `run_scan()` call. This gets the real concurrency
+win (multiple mailboxes' API calls overlapping) with zero additional correctness risk, because
+identity resolution and mirror-writing stay serialized through `run_scan`'s own single
+session/fingerprints dict/`seen_sources` set — the same safe design lever 01 already built,
+just fed by more than one source at once. A source's mid-stream exception is forwarded through
+the queue and re-raised at the consumer, matching what a single failing ingestor would have
+done on its own (and letting `run_scan`'s existing `_next_batch` partial-batch handling take it
+from there, unchanged).
+
+Both routes simplified as a result: `scan_email_accounts` no longer needs the manual
+base-count-plus-partial progress accumulation across accounts (there's only one `run_scan`
+call now, so its own progress callback is already the whole picture) — a meaningful reduction
+in that function's complexity, not just a speed win. `scan_all`'s account loop got the same
+treatment; its folder branch stays a separate `run_scan()` call (smaller, more contained
+change, matching the report's "small effort" framing for this lever).
+
+New tests: `test_fan_in_ingestor.py` proves the actual mechanism directly — two slow
+(`asyncio.sleep`-based) fake ingestors interleave in ~0.1s total, not the ~0.2s two fully
+sequential sources would take; a failing source's exception propagates to the consumer while
+still surfacing whatever it already yielded; an empty ingestor list yields nothing. Stable
+10/10 on repeated runs (no timing flakiness despite using real sleeps). Live-verified against
+two real connected accounts on an isolated instance: one combined scan found 80 resumes (40 per
+account against identical fixtures), correctly created 40 + deduped the other 40, updated both
+accounts' `last_scanned_at` together, and `parse` stage timing (0.49s summed) again exceeded
+wall-clock `elapsed_seconds` (0.2s) — the same overlap signature as lever 01's verification.
+185 backend tests passing (182 + 3 new), 0 failures, stable across 3 repeated runs.
+
+## 45. Speed plan, step 3 — QA fix: one failing mailbox was truncating every healthy sibling
+
+QA on section 44's `FanInIngestor` found a real reliability regression: any one source's
+exception was treated as a poison pill that immediately cancelled every other still-producing
+source sharing the same combined scan — reproduced directly by QA (a healthy 100-item source
+paired with one that failed after 0.05s only got 4 of its own items out before the whole
+stream was cut off). In the old per-account sequential loop, one account's failure only ever
+affected that account; this broke that isolation, and since the propagated exception unwound
+all the way to the route's outer `except`, the *whole job* was reported failed rather than
+"completed, one account errored" — a real regression for exactly the multi-mailbox scenario
+this lever targets, surfacing during exactly the kind of session that's been about protecting
+this "one bad thing shouldn't take down everything else" guarantee.
+
+Fixed by changing what a source's exception does inside `FanInIngestor`: instead of being
+forwarded to the consumer and re-raised (killing the combined stream), it's now caught at the
+source's own pump task, recorded on `self.errors` (label-attributed) and `self.failed_labels`,
+and that's it — every other pump keeps running, `scan()` itself never raises for a source-level
+failure. Both call sites (`scan_email_accounts`, `scan_all`'s account loop) updated to pass
+`(account_id, ingestor)` pairs instead of bare ingestors, merge `fan_in.errors` into the job's
+error list afterward, and — new correctness detail this fix surfaced — only bump
+`last_scanned_at` for accounts *not* in `fan_in.failed_labels`, so a failed account no longer
+gets silently credited with a fresh "successfully scanned" timestamp.
+
+Two new tests prove it: `test_fan_in_ingestor.py`'s
+`test_a_failing_source_does_not_truncate_a_healthy_sibling` reproduces QA's exact scenario
+(healthy 100-item source + a source failing at 0.05s) and asserts all 100 healthy items still
+land; a new `test_scan_email_accounts_isolation.py` proves the same guarantee through the real
+route end-to-end (two accounts, one wired to a monkeypatched failing ingestor) — job reports
+`"completed"` (not failed), the healthy account's 5 candidates are created, the failing
+account's error is in `result.errors`, and only the healthy account's `last_scanned_at` moved.
+Both confirmed to fail against the pre-fix poison-pill version before passing after. 187
+backend tests passing (185 + 2 new), 0 failures, stable across 3 repeated runs. Live-verified
+the normal (non-failing) single-account path is unaffected.
+
 ## Cross-references
 
 - [Design Decisions](design-decisions.md) — the ADRs behind each choice above

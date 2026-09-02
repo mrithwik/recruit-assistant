@@ -38,8 +38,10 @@ from app.scanning.email_ingestor import (
     OutlookIngestor,
     load_fixtures_from_manifest,
 )
+from app.scanning.fan_in_ingestor import FanInIngestor
 from app.scanning.folder_ingestor import FolderIngestor
 from app.scanning.ingest_service import run_scan
+from app.scanning.ingestor_base import ResumeIngestor
 from app.scanning.job_registry import (
     ScanAlreadyRunningError,
     complete_job,
@@ -226,16 +228,16 @@ async def scan_email_accounts(
         raise HTTPException(409, str(exc)) from exc
 
     async def _run() -> None:
-        combined = ScanResult(resumes_found=0, candidates_created=0, candidates_updated=0, duplicates_skipped=0, errors=[])
-        account_labels: list[str] = []
         try:
             mock_fixtures = (
                 load_fixtures_from_manifest(resolve_mock_manifest_path(settings)) if get_use_mock_email() else []
             )
+            lookup_errors: list[str] = []
+            account_labels: list[str] = []
+            accounts_by_label: dict[str, EmailAccount] = {}
             with storage.session() as session:
+                ingestors: list[tuple[str, ResumeIngestor]] = []
                 for account_id in payload.account_ids:
-                    if is_cancel_requested(job.id):
-                        break
                     # Looked up regardless of mock/real mode (matching the
                     # scheduler's nightly job) — under mock, build_email_ingestor
                     # never touches `account`, but the caller still needs it
@@ -245,85 +247,61 @@ async def scan_email_accounts(
                     # "demo@mock.local" row) never updated its record.
                     account = session.get(EmailAccount, account_id)
                     if not get_use_mock_email() and not account:
-                        combined.errors.append(f"{account_id}: account not found")
+                        lookup_errors.append(f"{account_id}: account not found")
                         continue
                     ingestor, error = build_email_ingestor(account_id, account, settings, mock_fixtures)
                     if error:
-                        combined.errors.append(error)
+                        lookup_errors.append(error)
                         continue
                     account_labels.append(account.email_address if account else "mock mailbox")
-
-                    # Live progress must reflect the grand total across
-                    # already-completed accounts plus this account's partial
-                    # progress so far — captures `combined`'s state at the
-                    # start of this account, since `combined` itself only
-                    # gets updated once this account's run_scan returns.
-                    base_resumes_found = combined.resumes_found
-                    base_created = combined.candidates_created
-                    base_updated = combined.candidates_updated
-                    base_skipped = combined.duplicates_skipped
-                    base_stage_timings = dict(combined.stage_timings)
-
-                    def _on_progress(
-                        partial: ScanResult,
-                        _resumes_found=base_resumes_found,
-                        _created=base_created,
-                        _updated=base_updated,
-                        _skipped=base_skipped,
-                        _stage_timings=base_stage_timings,
-                    ) -> None:
-                        # Bound as default-arg values (not read from the
-                        # enclosing scope) so this closure can't accidentally
-                        # pick up a later loop iteration's reassigned
-                        # base_* — see ruff B023.
-                        update_progress(
-                            job.id,
-                            ScanResult(
-                                resumes_found=_resumes_found + partial.resumes_found,
-                                candidates_created=_created + partial.candidates_created,
-                                candidates_updated=_updated + partial.candidates_updated,
-                                duplicates_skipped=_skipped + partial.duplicates_skipped,
-                                errors=combined.errors + partial.errors,
-                                elapsed_seconds=partial.elapsed_seconds,
-                                stage_timings=_round_stage_timings(
-                                    _merge_stage_timings(_stage_timings, partial.stage_timings)
-                                ),
-                            ),
-                        )
-
-                    result = await run_scan(
-                        ingestor=ingestor,
-                        storage=storage,
-                        session=session,
-                        candidates_dir=settings.candidates_dir,
-                        llm=llm,
-                        summary_model=settings.llm_scoring_model,
-                        embedding_model=settings.embedding_model,
-                        date_start=payload.date_start,
-                        date_end=payload.date_end,
-                        max_concurrent_embeddings=settings.max_concurrent_llm_calls,
-                        max_concurrent_processing=settings.max_concurrent_llm_calls,
-                        on_progress=_on_progress,
-                        on_should_cancel=lambda: is_cancel_requested(job.id),
-                    )
+                    # account_id (not the human-readable label above) keys
+                    # FanInIngestor's per-source error attribution — always
+                    # present and unique, unlike email_address when
+                    # `account` is None under mock mode.
+                    ingestors.append((account_id, ingestor))
                     if account:
-                        # Tracked (SearchHistoryEntry/IngestScanHistoryEntry)
-                        # but never written back to the account record
-                        # itself — the Email Access page reads this field
-                        # directly and had no way to reflect a scan that
-                        # just happened.
-                        account.last_scanned_at = datetime.utcnow()
-                    combined.resumes_found += result.resumes_found
-                    combined.candidates_created += result.candidates_created
-                    combined.candidates_updated += result.candidates_updated
-                    combined.duplicates_skipped += result.duplicates_skipped
-                    combined.errors.extend(result.errors)
-                    combined.elapsed_seconds = round(combined.elapsed_seconds + result.elapsed_seconds, 2)
-                    combined.stage_timings = _merge_stage_timings(combined.stage_timings, result.stage_timings)
-                record_ingest_scan(storage, session, "email", ", ".join(account_labels), combined)
+                        accounts_by_label[account_id] = account
+
+                # Every account's mailbox fetch runs concurrently, through
+                # one combined ingestor feeding one run_scan() call — see
+                # FanInIngestor's docstring for why this is the safe way to
+                # get the speed-plan report's lever #3 (one account's
+                # entire scan no longer has to finish before the next
+                # starts) without risking two accounts racing on the same
+                # candidate identity the way running several run_scan()
+                # calls concurrently against this same session would, and
+                # why one account failing mid-scan doesn't take the others
+                # down with it.
+                fan_in = FanInIngestor(ingestors)
+                result = await run_scan(
+                    ingestor=fan_in,
+                    storage=storage,
+                    session=session,
+                    candidates_dir=settings.candidates_dir,
+                    llm=llm,
+                    summary_model=settings.llm_scoring_model,
+                    embedding_model=settings.embedding_model,
+                    date_start=payload.date_start,
+                    date_end=payload.date_end,
+                    max_concurrent_embeddings=settings.max_concurrent_llm_calls,
+                    max_concurrent_processing=settings.max_concurrent_llm_calls,
+                    on_progress=lambda r: update_progress(job.id, r),
+                    on_should_cancel=lambda: is_cancel_requested(job.id),
+                )
+                result.errors = lookup_errors + fan_in.errors + result.errors
+                # Tracked (SearchHistoryEntry/IngestScanHistoryEntry) but
+                # never written back to the account record itself — the
+                # Email Access page reads this field directly and had no
+                # way to reflect a scan that just happened. A failed
+                # account doesn't get credited with a fresh timestamp.
+                now = datetime.utcnow()
+                for account_id, account in accounts_by_label.items():
+                    if account_id not in fan_in.failed_labels:
+                        account.last_scanned_at = now
+                record_ingest_scan(storage, session, "email", ", ".join(account_labels), result)
                 session.commit()
-            combined.stage_timings = _round_stage_timings(combined.stage_timings)
-            complete_job(job.id, combined)
+            result.stage_timings = _round_stage_timings(result.stage_timings)
+            complete_job(job.id, result)
         except Exception as exc:  # noqa: BLE001 - surfaced via job status, not raised into a dead background task
             fail_job(job.id, str(exc))
 
@@ -388,22 +366,34 @@ async def scan_all(
                     combined.elapsed_seconds += result.elapsed_seconds
                     combined.stage_timings = _merge_stage_timings(combined.stage_timings, result.stage_timings)
 
-                for account_id in account_ids:
-                    if is_cancel_requested(job.id):
-                        break
-                    # See scan_email_accounts above — looked up regardless
-                    # of mock/real mode so last_scanned_at still gets
-                    # written for a mock scan of a real account row.
-                    account = session.get(EmailAccount, account_id)
-                    if not get_use_mock_email() and not account:
-                        combined.errors.append(f"{account_id}: account not found")
-                        continue
-                    ingestor, error = build_email_ingestor(account_id, account, settings, mock_fixtures)
-                    if error:
-                        combined.errors.append(error)
-                        continue
+                if account_ids:
+                    # Every connected account's mailbox fetch runs
+                    # concurrently, through one combined ingestor feeding
+                    # one run_scan() call — see FanInIngestor's docstring
+                    # and scan_email_accounts above for why this is the
+                    # safe way to get the speed-plan report's lever #3.
+                    account_ingestors: list[tuple[str, ResumeIngestor]] = []
+                    accounts_by_label: dict[str, EmailAccount] = {}
+                    for account_id in account_ids:
+                        # See scan_email_accounts above — looked up
+                        # regardless of mock/real mode so last_scanned_at
+                        # still gets written for a mock scan of a real
+                        # account row.
+                        account = session.get(EmailAccount, account_id)
+                        if not get_use_mock_email() and not account:
+                            combined.errors.append(f"{account_id}: account not found")
+                            continue
+                        ingestor, error = build_email_ingestor(account_id, account, settings, mock_fixtures)
+                        if error:
+                            combined.errors.append(error)
+                            continue
+                        account_ingestors.append((account_id, ingestor))
+                        if account:
+                            accounts_by_label[account_id] = account
+
+                    fan_in = FanInIngestor(account_ingestors)
                     result = await run_scan(
-                        ingestor=ingestor,
+                        ingestor=fan_in,
                         storage=storage,
                         session=session,
                         candidates_dir=settings.candidates_dir,
@@ -415,13 +405,17 @@ async def scan_all(
                         on_progress=lambda r: update_progress(job.id, r),
                         on_should_cancel=lambda: is_cancel_requested(job.id),
                     )
-                    if account:
-                        account.last_scanned_at = datetime.utcnow()
+                    # A failed account doesn't get credited with a fresh
+                    # timestamp — see scan_email_accounts above.
+                    now = datetime.utcnow()
+                    for account_id, account in accounts_by_label.items():
+                        if account_id not in fan_in.failed_labels:
+                            account.last_scanned_at = now
                     combined.resumes_found += result.resumes_found
                     combined.candidates_created += result.candidates_created
                     combined.candidates_updated += result.candidates_updated
                     combined.duplicates_skipped += result.duplicates_skipped
-                    combined.errors.extend(result.errors)
+                    combined.errors.extend(fan_in.errors + result.errors)
                     combined.elapsed_seconds += result.elapsed_seconds
                     combined.stage_timings = _merge_stage_timings(combined.stage_timings, result.stage_timings)
 
