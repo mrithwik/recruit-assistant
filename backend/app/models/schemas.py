@@ -223,6 +223,12 @@ class ScanEmailRequest(BaseModel):
     account_ids: list[str]
     date_start: datetime | None = None
     date_end: datetime | None = None
+    # When false (default) and date_start isn't explicitly given, each
+    # account is scanned only from its own EmailAccount.last_scanned_at
+    # forward — see speed-plan lever "incremental email scan" in
+    # project-log.md. Set true to force a full mailbox rescan (e.g. after a
+    # parsing/matching change that should reprocess history).
+    full_rescan: bool = False
 
     _normalize_dates = field_validator("date_start", "date_end")(_to_naive_utc)
 

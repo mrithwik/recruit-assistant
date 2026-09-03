@@ -39,6 +39,16 @@ async def _run_nightly_scan(storage: BaseStorageBackend, llm: LLMClient, setting
 
         for source in sources:
             try:
+                # Nightly runs default to incremental: only mail/files new
+                # since this source's own last successful run get
+                # re-fetched and re-parsed, not its entire history every
+                # night — see speed-plan "incremental scan" lever and
+                # routes/scan.py's _effective_date_start (this path has no
+                # explicit-override/full_rescan option, since it's never
+                # user-driven — a full rescan here just means clearing
+                # last_run_at/last_scanned_at, or using the on-demand
+                # routes' full_rescan flag instead).
+                date_start = source.last_run_at
                 if source.kind == "folder":
                     ingestor = FolderIngestor([source.ref], include_subfolders=source.include_subfolders)
                 else:
@@ -56,7 +66,16 @@ async def _run_nightly_scan(storage: BaseStorageBackend, llm: LLMClient, setting
                     if error:
                         logger.warning("scheduled_source_skipped", ref=source.ref, error=error)
                         continue
+                    date_start = account.last_scanned_at if account else source.last_run_at
 
+                # Captured before the fetch runs, not after run_scan (which
+                # includes real parse/summarize LLM calls) finishes — a
+                # message that arrives mid-scan would otherwise fall before
+                # the recorded watermark but never have been in this scan's
+                # results, silently and permanently excluding it from every
+                # future incremental scan. See routes/scan.py's matching
+                # comment / project-log's incremental-scan QA finding.
+                scan_started_at = datetime.utcnow()
                 result = await run_scan(
                     ingestor=ingestor,
                     storage=storage,
@@ -65,12 +84,13 @@ async def _run_nightly_scan(storage: BaseStorageBackend, llm: LLMClient, setting
                     llm=llm,
                     summary_model=settings.llm_scoring_model,
                     embedding_model=settings.embedding_model,
+                    date_start=date_start,
                     max_concurrent_embeddings=settings.max_concurrent_llm_calls,
                     max_concurrent_processing=settings.max_concurrent_llm_calls,
                 )
-                source.last_run_at = datetime.utcnow()
+                source.last_run_at = scan_started_at
                 if source.kind == "email_account" and account:
-                    account.last_scanned_at = source.last_run_at
+                    account.last_scanned_at = scan_started_at
                 origin = "email" if source.kind == "email_account" else "folder"
                 record_ingest_scan(storage, session, origin, f"auto-scan: {source.ref}", result)
                 session.commit()

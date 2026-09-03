@@ -102,6 +102,41 @@ def build_email_ingestor(
     )
 
 
+class _ScopedDateIngestor(ResumeIngestor):
+    """Wraps a source ingestor to always scan a fixed date range, ignoring
+    whatever date_start/date_end its scan() is actually called with. Needed
+    because FanInIngestor forwards one date_start/date_end pair to every
+    source it fans in uniformly — but each connected account should default
+    to its own effective start (that account's own last_scanned_at), not
+    one date shared across every account in the request. See
+    _effective_date_start."""
+
+    def __init__(self, inner: ResumeIngestor, date_start, date_end):
+        self.inner = inner
+        self.date_start = date_start
+        self.date_end = date_end
+
+    async def scan(self, date_start=None, date_end=None):
+        async for item in self.inner.scan(date_start=self.date_start, date_end=self.date_end):
+            yield item
+
+
+def _effective_date_start(explicit_date_start, full_rescan: bool, last_scanned_at):
+    """Incremental-scan default (speed-plan report): a mailbox that's
+    already been scanned shouldn't have its full history re-fetched and
+    re-parsed on every routine scan — only mail since the last successful
+    scan needs to be looked at again. An explicit date_start always wins
+    (existing custom-range behavior, unchanged); full_rescan explicitly
+    opts back into scanning everything (e.g. after a parsing/scoring change
+    that should reprocess history); otherwise default to the account's own
+    last_scanned_at, or None (full history) if it's never been scanned."""
+    if explicit_date_start is not None:
+        return explicit_date_start
+    if full_rescan:
+        return None
+    return last_scanned_at
+
+
 def record_ingest_scan(storage: BaseStorageBackend, session, origin: str, source_label: str, result: ScanResult) -> None:
     # One row per completed scan (regardless of resumes_found — a scan
     # that found nothing new is still worth showing on the dashboard, e.g.
@@ -258,7 +293,12 @@ async def scan_email_accounts(
                     # FanInIngestor's per-source error attribution — always
                     # present and unique, unlike email_address when
                     # `account` is None under mock mode.
-                    ingestors.append((account_id, ingestor))
+                    effective_start = _effective_date_start(
+                        payload.date_start, payload.full_rescan, account.last_scanned_at if account else None
+                    )
+                    ingestors.append(
+                        (account_id, _ScopedDateIngestor(ingestor, effective_start, payload.date_end))
+                    )
                     if account:
                         accounts_by_label[account_id] = account
 
@@ -273,6 +313,17 @@ async def scan_email_accounts(
                 # why one account failing mid-scan doesn't take the others
                 # down with it.
                 fan_in = FanInIngestor(ingestors)
+                # Captured before the mailbox search runs, not after the
+                # whole scan (parse/summarize/LLM calls included) finishes —
+                # see project-log's incremental-scan QA finding. A message
+                # that arrives mid-scan has a received-date before this
+                # timestamp but was never in this scan's own search results;
+                # stamping last_scanned_at with the post-scan time would
+                # push the next scan's lower bound past it, silently and
+                # permanently excluding it. The small resulting overlap on
+                # the next scan is harmless — already deduped by content
+                # hash/fingerprint in run_scan.
+                scan_started_at = datetime.utcnow()
                 result = await run_scan(
                     ingestor=fan_in,
                     storage=storage,
@@ -294,10 +345,9 @@ async def scan_email_accounts(
                 # Email Access page reads this field directly and had no
                 # way to reflect a scan that just happened. A failed
                 # account doesn't get credited with a fresh timestamp.
-                now = datetime.utcnow()
                 for account_id, account in accounts_by_label.items():
                     if account_id not in fan_in.failed_labels:
-                        account.last_scanned_at = now
+                        account.last_scanned_at = scan_started_at
                 record_ingest_scan(storage, session, "email", ", ".join(account_labels), result)
                 session.commit()
             result.stage_timings = _round_stage_timings(result.stage_timings)
@@ -311,6 +361,7 @@ async def scan_email_accounts(
 
 @router.post("/all", response_model=ScanJobOut, status_code=202)
 async def scan_all(
+    full_rescan: bool = False,
     storage: BaseStorageBackend = Depends(get_storage),
     llm: LLMClient = Depends(get_llm_client),
     settings: Settings = Depends(get_settings),
@@ -322,7 +373,16 @@ async def scan_all(
     whether anything's new. Deliberately one bulk pass (same cost as a
     normal Scan Sources run) rather than looping a per-candidate scoped
     rescan across the whole pool — at real volume (hundreds of candidates)
-    that would mean hundreds of separate mailbox searches instead of one."""
+    that would mean hundreds of separate mailbox searches instead of one.
+
+    Each account defaults to scanning only its own mail since
+    last_scanned_at (see _effective_date_start) rather than re-fetching and
+    re-parsing its entire history on every "check for updates" click — pass
+    full_rescan=true to force a full mailbox rescan for every account
+    instead. Folder paths here are always scanned in full — there's no
+    per-path last-scanned watermark for this route's ad hoc folder list
+    (only ScheduledSource-registered folders track one, via the nightly
+    scheduler)."""
     with storage.session() as session:
         account_ids = list(session.execute(select(EmailAccount.id)).scalars())
         folder_paths = sorted(
@@ -387,11 +447,20 @@ async def scan_all(
                         if error:
                             combined.errors.append(error)
                             continue
-                        account_ingestors.append((account_id, ingestor))
+                        effective_start = _effective_date_start(
+                            None, full_rescan, account.last_scanned_at if account else None
+                        )
+                        account_ingestors.append(
+                            (account_id, _ScopedDateIngestor(ingestor, effective_start, None))
+                        )
                         if account:
                             accounts_by_label[account_id] = account
 
                     fan_in = FanInIngestor(account_ingestors)
+                    # Captured before the mailbox search runs, not after —
+                    # see scan_email_accounts above / project-log's
+                    # incremental-scan QA finding.
+                    scan_started_at = datetime.utcnow()
                     result = await run_scan(
                         ingestor=fan_in,
                         storage=storage,
@@ -407,10 +476,9 @@ async def scan_all(
                     )
                     # A failed account doesn't get credited with a fresh
                     # timestamp — see scan_email_accounts above.
-                    now = datetime.utcnow()
                     for account_id, account in accounts_by_label.items():
                         if account_id not in fan_in.failed_labels:
-                            account.last_scanned_at = now
+                            account.last_scanned_at = scan_started_at
                     combined.resumes_found += result.resumes_found
                     combined.candidates_created += result.candidates_created
                     combined.candidates_updated += result.candidates_updated

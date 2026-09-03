@@ -1483,6 +1483,72 @@ text scoring (05), the dead `LLM_TRIAGE_MODEL` config (06), the shortlist multip
 batched multi-candidate scoring (08) — all wait on the user's answers to the report's open
 questions.
 
+## 47. Incremental email/folder scan — don't re-fetch history that's already been scanned
+
+Not from the original speed-plan report's numbered levers — this came out of directly asking
+the user how they wanted to resolve the report's "typical mailbox volume" open question. Their
+answer: the real connected mailbox has 10,000+ emails across ten years, daily volume is
+unknown yet, and — the actual insight — once a date range has been scanned, it shouldn't need
+rescanning again unless a future parsing/matching change means it should be reprocessed. Every
+scan path today (`/scan/email-accounts`, `/scan/all`, and the nightly scheduler) re-fetches and
+re-parses full mailbox history on every run; `EmailAccount.last_scanned_at` and
+`ScheduledSource.last_run_at` were already being written, just never read back as a scan
+lower-bound.
+
+Added `_effective_date_start` (`routes/scan.py`): an explicit `date_start` on a request always
+wins (existing custom-range behavior unchanged); otherwise a new `full_rescan: bool = False`
+flag on `ScanEmailRequest` (and as a query param on `POST /scan/all`) opts back into scanning
+everything; otherwise the effective start defaults to the account's own `last_scanned_at` (or
+full history if it's never been scanned). Because `FanInIngestor` forwards one `date_start` to
+every source it fans in uniformly, and different accounts in the same request can have
+different watermarks, added `_ScopedDateIngestor` — a thin wrapper that pins a source to its
+own fixed date range regardless of what `scan()` is actually called with, so each account in a
+multi-account request is bounded independently. The nightly scheduler (`scheduler/__init__.py`)
+gets the same default — `_run_nightly_scan` now passes each source's own watermark
+(`account.last_scanned_at` for mailboxes, `source.last_run_at` for folders) as `date_start`,
+with no override option since that path is never user-driven.
+
+Folder scans initiated on-demand (`/scan/folders`, and `/scan/all`'s ad hoc folder-path sweep)
+were deliberately left untouched — there's no per-path last-scanned watermark for those (only
+`ScheduledSource`-registered folders track one), and local-disk folder scans are cheap enough
+that this wasn't the bottleneck the user was describing.
+
+Nine new tests: `test_incremental_email_scan.py` (6 — per-account default-to-watermark,
+never-scanned-defaults-to-full-history, explicit `date_start` overriding the watermark,
+`full_rescan` bypassing it, two accounts in one request getting independent watermarks, and
+`/scan/all` applying the same default/override behavior — the last of these also confirms the
+always-present mock-mode `demo@mock.local` account, which `/scan/all` sweeps in along with
+whatever the test seeds, doesn't corrupt the assertion) and `test_incremental_nightly_scan.py`
+(3 — scheduled folder and email sources each scanning from their own watermark, and a
+never-run scheduled source still getting full history). 203 backend tests passing (194 + 9
+new), 0 failures.
+
+### QA fix: the watermark was captured after the scan finished, not before it started
+
+QA found (and directly reproduced) a real, silent-data-loss bug: `account.last_scanned_at` /
+`source.last_run_at` were stamped with `datetime.utcnow()` *after* `run_scan()` returned — i.e.
+after real parse/summarize LLM calls for every resume in the batch had already run, which at
+real volume can take minutes. Any message that arrived on the mailbox during that window has a
+received-date earlier than the recorded watermark but was never part of this scan's own search
+results — and every future incremental scan's `after: <watermark>` filter would exclude it too,
+permanently, with no error or symptom to notice by. Exactly the "silent permanent data loss"
+failure class this project has repeatedly had to guard against (the candidate-delete PII
+orphaning, the session-trim mirror-orphaning bug, the same-day mirror collision).
+
+Fixed by capturing the watermark once, right before the mailbox fetch begins (`scan_started_at
+= datetime.utcnow()`, immediately before the `run_scan()` call), and writing that back instead
+of a freshly-taken timestamp afterward — at all three call sites (`scan_email_accounts`,
+`scan_all`, and the scheduler's per-source loop). Any message that arrives during the scan is
+now safely inside the next scan's window instead of permanently excluded from every future one;
+the resulting small overlap is harmless, already deduped by content-hash/fingerprint in
+`run_scan`.
+
+New test `test_incremental_scan_watermark_timing.py` proves it directly: a deliberately slow
+ingestor (yields after a 0.4s sleep, standing in for real parse/summarize latency) is scanned,
+and the recorded watermark is asserted to land close to when the request was *sent*, not when
+it *completed* — confirmed red (watermark landed at completion time) against the pre-fix code
+via `git stash`, green after. 204 backend tests passing (203 + 1 new), 0 failures.
+
 ## Cross-references
 
 - [Design Decisions](design-decisions.md) — the ADRs behind each choice above
