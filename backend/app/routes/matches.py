@@ -168,7 +168,7 @@ async def run_matching(
                     for c in candidates
                 ]
 
-                results, match_stage_timings = await match_job_against_pool(
+                results, match_stage_timings, match_errors = await match_job_against_pool(
                     llm=llm,
                     triage_model=settings.llm_triage_model,
                     scoring_model=settings.llm_scoring_model,
@@ -221,6 +221,7 @@ async def run_matching(
                     candidates_created=matched_count,
                     candidates_updated=0,
                     duplicates_skipped=0,
+                    errors=match_errors,
                     # Rounded here, once, now that nothing sums these
                     # further — summing already-rounded per-call numbers can
                     # quantize real small work down to a false 0.00 (see

@@ -1658,6 +1658,39 @@ before passing after. One pre-existing test (`test_data_mode_filter.py`) updated
 always-present `"triage"` key in `stage_timings`. 210 backend tests passing (206 + 4 new), 0
 failures.
 
+## 50. Matching pipeline: per-candidate error isolation for triage/deep-score/judge
+
+Not a QA finding on a bug — a QA *note*, flagged during the triage-dual-mode review as a
+pre-existing characteristic worth a project-wide look, not something that lever introduced:
+`llm_triage`'s (and, by the same construction, `_score_one`'s and `_judge_one`'s) inner worker
+had no per-item try/except, so a single candidate's LLM call failing (a transient provider
+error, say) propagated through `bounded_gather`'s unmodified `asyncio.gather` and aborted the
+*entire* matching run — losing every other candidate's already-computed deep-score/judge
+results too, and (via the route's outer `except Exception: fail_job(...)`) failing the whole
+job. Exactly the "one bad thing shouldn't take down everything else" guarantee this project has
+repeatedly had to add elsewhere (per-resume isolation in ingestion, per-source isolation in
+`FanInIngestor`) — the user asked to close it now rather than let it sit as a known gap.
+
+Each of the three `bounded_gather` workers in `matcher.py` now catches its own exceptions and
+degrades instead of raising: a failing **deep-score** call drops that one candidate from the
+results (nothing to score it with) — the other candidates' results are unaffected. A failing
+**judge** call just leaves that candidate's deep-score result un-reviewed, exactly like a
+candidate whose score never fell in the judge-review band to begin with (the existing
+`judgments_by_candidate_id.get(...)` lookup already tolerated a missing entry). A failing
+**triage** call fails *open* — assigns a neutral relevance (50) rather than silently dropping
+the candidate from consideration, matching `TRIAGE_PROMPT`'s own "err toward including if
+unsure" instruction. All three record what failed in a new `errors: list[str]` return value;
+`match_job_against_pool` is now `(results, stage_timings, errors)` (was a 2-tuple) and
+`routes/matches.py` threads `match_errors` into the run's `ScanResult.errors`, the same place
+the scan side already surfaces per-resume/per-account failures.
+
+Three new tests (`test_matching_error_isolation.py`) prove each of the three failure paths
+directly: one candidate's deep-score exception doesn't remove the other candidates' results
+from the output; one candidate's judge exception leaves its deep-score intact instead of
+losing the candidate entirely; one candidate's triage exception still lets it through (fail
+open) rather than excluding it. Confirmed all three fail against the pre-fix code (`git
+stash`) before passing after. 213 backend tests passing (210 + 3 new), 0 failures.
+
 ## Cross-references
 
 - [Design Decisions](design-decisions.md) — the ADRs behind each choice above

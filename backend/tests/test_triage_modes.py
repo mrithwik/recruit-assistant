@@ -61,7 +61,7 @@ async def test_embedding_mode_never_calls_the_llm_for_triage():
     llm = _RecordingLLMClient()
     pool = _pool(10)
 
-    results, stage_timings = await match_job_against_pool(
+    results, stage_timings, _errors = await match_job_against_pool(
         llm=llm,
         triage_model="triage-model",
         scoring_model="scoring",
@@ -84,7 +84,7 @@ async def test_llm_mode_triages_a_wider_net_down_to_the_same_deep_score_size():
     pool = _pool(20)
     keep_n = 2 * SHORTLIST_MULTIPLIER
 
-    results, stage_timings = await match_job_against_pool(
+    results, stage_timings, _errors = await match_job_against_pool(
         llm=llm,
         triage_model="triage-model",
         scoring_model="scoring",
@@ -131,7 +131,7 @@ async def test_llm_triage_can_rescue_a_candidate_the_embedding_prefilter_would_h
 
     llm = _FavorsC5LLMClient()
 
-    results, _ = await match_job_against_pool(
+    results, _, _errors = await match_job_against_pool(
         llm=llm,
         triage_model="triage-model",
         scoring_model="scoring",
@@ -168,7 +168,7 @@ async def test_mock_llm_triage_reads_the_prompt_instead_of_returning_one_fixed_v
         },
     ]
 
-    results, stage_timings = await match_job_against_pool(
+    results, stage_timings, _errors = await match_job_against_pool(
         llm=llm,
         triage_model="triage-model",
         scoring_model="scoring",
