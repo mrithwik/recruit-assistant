@@ -1549,6 +1549,115 @@ and the recorded watermark is asserted to land close to when the request was *se
 it *completed* — confirmed red (watermark landed at completion time) against the pre-fix code
 via `git stash`, green after. 204 backend tests passing (203 + 1 new), 0 failures.
 
+## 48. Speed plan, step 5 — score against the candidate summary, not raw resume text
+
+The other lever that came out of directly asking the user how to resolve the report's "quality
+tradeoff appetite" open question. Their framing: invest in making the summary genuinely good,
+and there's little real tradeoff left. `judge_score` was already scoring against
+`candidate.semantic_summary`, not raw text — only `deep_score` (the first, always-run scoring
+pass) still used the raw parsed resume text, truncated at 6000 chars, carrying whatever
+PDF/OCR formatting noise `parse_resume` didn't clean up.
+
+Two changes, shipped together per the user's choice (rather than summary-quality-only first):
+
+`SUMMARY_PROMPT` (`matching/prompts.py`) rewritten from "2-3 sentences, role fit/seniority/
+skills/gaps" to "4-6 sentences, dense with specifics" — and explicitly told not to restate
+skills/years/education/employment-status/work-visa (already passed to `deep_score` as separate
+structured fields; a summary that only echoed them back would add nothing new to score
+against). Instead it's steered toward what those structured fields miss: career narrative and
+seniority trajectory, specific projects/achievements with concrete scope from the resume
+(team size, scale, metrics — not invented), domain specialization, and gaps/red flags.
+
+`matcher.py`'s `_score_one` now passes `c.get("summary") or c["resume_text"]` to `deep_score`
+instead of `c["resume_text"]` — summary first, raw text only as a fallback for a candidate that
+doesn't have one yet (pre-dates this feature, or summarization failed on that resume), so
+nothing gets scored against an empty string.
+
+**On the "A/B against known-good matches before trusting it broadly" ask**: this environment
+has no real LLM credentials (same limitation noted in section 46), so no live quality
+comparison was possible here. What *is* now in place for the user to run themselves: a new
+live-only golden test, `test_golden_fixture_live_tier_scoring_against_summary` (skipped without
+`RUN_LIVE_GOLDEN=true` + a real key, same gate as the existing golden suite) — it runs each
+golden fixture's resume text through `summarize_candidate` first, then `deep_score`s the
+resulting summary instead of the raw text (mirroring exactly what `_score_one` now does in
+production), and holds the result to the *same* `expected_tier_min`/`expected_tier_max` bounds
+as the raw-text version. A fixture that passes the raw-text golden test but fails the
+summary-based one is the actual real-world signal that `SUMMARY_PROMPT` is losing something
+`deep_score` needs — that's the concrete way to run the requested A/B before trusting this
+broadly, whenever a real provider key is available.
+
+Two new mock-LLM unit tests (`test_scoring_uses_summary.py`) prove the routing itself,
+independent of quality: a candidate with a summary gets scored against it (not the raw text —
+asserted by checking which marker string shows up in the actual prompt sent to the LLM), and a
+candidate with no summary yet still gets scored against its raw text rather than nothing.
+Checked the frontend for length assumptions before shipping the longer prompt: the one list-
+view usage (`all-candidates-page.tsx`) already `line-clamp-1`s the summary, so a longer one
+degrades gracefully there; the two detail-view usages show it in full by design. 206 backend
+tests passing (204 + 2 new, +2 new skipped-without-live-key golden tests), 0 failures.
+
+### QA fix: SCORING_PROMPT still called its input "Resume text" even when fed a summary
+
+QA caught, by inspection alone (no live model needed), that `SCORING_PROMPT` hard-coded the
+label `"Resume text (truncated):"` above its input slot — even in the now-common case where
+`deep_score` is actually handed the AI-generated summary, not the resume. `JUDGE_PROMPT`, fed
+the same kind of content one stage later, already labels it honestly as `"Candidate summary:"`
+— the inconsistency was a real risk: a model told it's reading "resume text" could plausibly
+read `SUMMARY_PROMPT`'s deliberate omissions (skills/years/education, already given above as
+structured fields) as a sparse resume, or list them under `missing_info`, undermining the
+whole point of switching to a denser, evidence-focused summary.
+
+Fixed by parameterizing the label instead of hard-coding it: `SCORING_PROMPT` now has a
+`{resume_label}` slot; `deep_score()` takes a `resume_label` param (default
+`RESUME_TEXT_LABEL`, matching prior behavior) and a new `SUMMARY_LABEL` constant (both in
+`matching/prompts.py`) states plainly that the input is an AI-generated summary that was told
+not to restate the structured fields, so an absence there shouldn't be read as missing from
+the resume itself. `matcher.py`'s `_score_one` now picks the label based on which input it
+actually used — `SUMMARY_LABEL` when scoring against `c["summary"]`, `RESUME_TEXT_LABEL` on
+the raw-text fallback path — so the model is told the truth in both cases, not just the common
+one. The new live golden test (`test_golden_fixture_live_tier_scoring_against_summary`) updated
+to pass `resume_label=SUMMARY_LABEL` too, so it now mirrors production exactly.
+
+`test_scoring_uses_summary.py`'s two existing tests extended to also assert on which label
+string appears in the actual prompt sent to the LLM (not just which content) — confirmed
+against the pre-fix code that they'd have caught this. 206 backend tests passing (same count —
+this was inline test coverage, not new test files), 0 failures.
+
+## 49. Speed plan, step 6 — dual-mode triage (embedding default, optional cheap-LLM re-rank)
+
+Resolves the report's `LLM_TRIAGE_MODEL` open question per the user's direction: keep both
+modes available and switchable, favoring free embedding-similarity by default, with the option
+to spend a cheap (or eventually local) LLM pass when embedding similarity alone is judged to be
+missing nuance — not a one-time either/or decision.
+
+New `settings.triage_mode` ("embedding" default | "llm"), global rather than per-request since
+it's a cost/quality tradeoff meant to be tuned once real usage shows which mode earns its keep,
+not decided scan-by-scan. `match_job_against_pool` gets a `triage_mode` param:
+`"embedding"` reproduces the exact prior behavior (cosine-similarity picks the
+`top_n * SHORTLIST_MULTIPLIER` shortlist, zero LLM calls, `stage_timings["triage"] == 0.0`).
+`"llm"` casts a *wider* embedding net first (`TRIAGE_WIDENING_MULTIPLIER = 3`× the final size)
+so the LLM triage pass has real candidates to promote that embedding similarity alone ranked
+outside the narrow shortlist, then a new `llm_triage()` (scores each candidate's summary — never
+the full deep-score prompt, that's the point of it being the cheap stage — via a new
+`TRIAGE_PROMPT`, `settings.llm_triage_model`) narrows back down to the exact same final size
+`deep_score` sees either way, so switching modes changes *which* candidates reach deep-scoring,
+not deep-scoring's own cost.
+
+`MockLLMClient` (`llm_client.py`) got a matching `_mock_triage` — same "actually read the
+input, don't return one fixed value" principle as the existing `_mock_score_match` — so
+`triage_mode="llm"` is exercisable and deterministic under `USE_MOCK_LLM=true`, not just live.
+
+Four new tests (`test_triage_modes.py`): embedding mode makes zero LLM calls and reports
+`triage: 0.0`; llm mode triages exactly the widened-net size and deep-scores exactly the same
+final size as embedding mode would; the actual point of the lever proven directly — a candidate
+ranked 6th by embedding similarity (inside the widened net, outside the narrow one) only
+reaches the final results when the LLM triage pass, not embedding similarity, promotes it
+(construed with a similarity gradient with no ties, so the ranking is deterministic); and
+`MockLLMClient`'s triage path reads the prompt instead of returning a fixed value. Confirmed
+red against the pre-change code (`TRIAGE_WIDENING_MULTIPLIER` didn't exist) via `git stash`
+before passing after. One pre-existing test (`test_data_mode_filter.py`) updated for the new
+always-present `"triage"` key in `stage_timings`. 210 backend tests passing (206 + 4 new), 0
+failures.
+
 ## Cross-references
 
 - [Design Decisions](design-decisions.md) — the ADRs behind each choice above

@@ -124,8 +124,11 @@ def test_run_matching_scopes_candidate_pool_by_data_mode(client):
     assert job["status"] == "completed"
     # stage_timings — added for the speed-plan report's "instrument first"
     # recommendation; confirms a real run through the route (not just the
-    # matcher function directly) actually reports per-stage time.
-    assert set(job["result"]["stage_timings"]) == {"embed", "deep_score", "judge"}
+    # matcher function directly) actually reports per-stage time. "triage"
+    # is always present (0.0 in the default embedding-only triage mode —
+    # see matcher.py's triage_mode) for a consistent key set regardless of
+    # which triage mode is configured.
+    assert set(job["result"]["stage_timings"]) == {"embed", "triage", "deep_score", "judge"}
 
     matches_resp = client.get(f"/api/v1/matches/{job_id}", headers=headers)
     matched_ids = {m["candidate"]["id"] for m in matches_resp.json()["matches"]}

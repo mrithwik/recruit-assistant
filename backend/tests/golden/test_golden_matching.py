@@ -18,7 +18,8 @@ from pathlib import Path
 import pytest
 
 from app.matching.llm_client import MockLLMClient, build_real_llm_client
-from app.matching.matcher import deep_score, score_to_tier
+from app.matching.matcher import deep_score, score_to_tier, summarize_candidate
+from app.matching.prompts import SUMMARY_LABEL
 from app.models.enums import EmploymentStatus, WorkVisaStatus
 from app.models.schemas import CandidateProfile
 
@@ -80,4 +81,46 @@ async def test_golden_fixture_live_tier(fixture):
     if "expected_tier_max" in fixture:
         assert _tier_at_most(tier, fixture["expected_tier_max"]), (
             f"{fixture['name']}: got {tier}, expected <= {fixture['expected_tier_max']}"
+        )
+
+
+@pytest.mark.skipif(
+    not os.getenv("RUN_LIVE_GOLDEN") or not (os.getenv("OPENROUTER_API_KEY") or os.getenv("OPENAI_API_KEY")),
+    reason="Live golden regression requires RUN_LIVE_GOLDEN=true and a real LLM API key.",
+)
+@pytest.mark.parametrize("fixture", _load_fixtures(), ids=lambda f: f["name"])
+async def test_golden_fixture_live_tier_scoring_against_summary(fixture):
+    """The A/B check for the "score against the summary, not raw resume
+    text" speed-plan lever: run each golden fixture through
+    summarize_candidate first, then deep_score the summary instead of the
+    raw resume text (this is what match_job_against_pool now does in
+    production — see matcher.py's _score_one), and hold it to the exact
+    same expected-tier bounds as the raw-text version above. A fixture that
+    passes the raw-text test but fails this one means the summary prompt is
+    losing signal deep_score needs — the prompt (SUMMARY_PROMPT) or this
+    switch should be reconsidered before it ships broadly, not this test."""
+    llm = build_real_llm_client(
+        openrouter_key=os.getenv("OPENROUTER_API_KEY", ""),
+        openai_key=os.getenv("OPENAI_API_KEY", ""),
+    )
+    assert llm is not None, "RUN_LIVE_GOLDEN requires a real provider key (skipif above should have caught this)"
+    scoring_model = os.getenv("LLM_SCORING_MODEL", "openrouter/openai/gpt-4.1-mini")
+    profile = CandidateProfile(
+        raw_text=fixture["resume_text"],
+        employment_status=EmploymentStatus.UNKNOWN,
+        work_visa_status=WorkVisaStatus.UNKNOWN,
+    )
+    summary = await summarize_candidate(llm, scoring_model, fixture["resume_text"])
+    result = await deep_score(llm, scoring_model, fixture["job_text"], summary, profile, resume_label=SUMMARY_LABEL)
+    tier = score_to_tier(float(result.get("score", 0)), has_red_flag=False).value
+
+    if "expected_tier_min" in fixture:
+        assert _tier_at_least(tier, fixture["expected_tier_min"]), (
+            f"{fixture['name']} (summary-based): got {tier} from summary {summary!r}, "
+            f"expected >= {fixture['expected_tier_min']}"
+        )
+    if "expected_tier_max" in fixture:
+        assert _tier_at_most(tier, fixture["expected_tier_max"]), (
+            f"{fixture['name']} (summary-based): got {tier} from summary {summary!r}, "
+            f"expected <= {fixture['expected_tier_max']}"
         )

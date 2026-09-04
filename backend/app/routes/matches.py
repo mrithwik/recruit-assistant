@@ -178,6 +178,7 @@ async def run_matching(
                     candidate_pool=pool,
                     top_n=top_n,
                     max_concurrent=settings.max_concurrent_llm_calls,
+                    triage_mode=settings.triage_mode,
                 )
 
                 candidates_by_id = {c.id: c for c in candidates}

@@ -49,6 +49,17 @@ class Settings(BaseSettings):
     llm_judge_model: str = "openrouter/anthropic/claude-3.5-sonnet"
     embedding_model: str = "openrouter/openai/text-embedding-3-small"
 
+    # Triage (the pre-deep-score shortlisting stage) defaults to free
+    # embedding-similarity — llm_triage_model was previously wired through
+    # as a parameter but never actually called (see speed-plan report).
+    # Set to "llm" to spend a cheap LLM pass re-ranking a wider embedding
+    # net before deep-scoring, for cases where pure vector similarity misses
+    # nuance a fast/cheap model (llm_triage_model — swap for a lower-cost or
+    # local model any time) would catch. Global, not per-request, since it's
+    # a cost/quality tradeoff meant to be tuned once real usage shows which
+    # mode is worth it, not decided scan-by-scan.
+    triage_mode: str = "embedding"
+
     # Caps in-flight LLM calls during matching/embedding (asyncio.gather runs
     # them concurrently instead of one-at-a-time) — high enough to actually
     # speed things up, low enough not to trip provider rate limits.

@@ -203,6 +203,29 @@ def _mock_extract_profile(prompt: str) -> dict:
     }
 
 
+def _mock_triage(prompt: str) -> dict:
+    """Same "actually read the input" principle as _mock_score_match,
+    applied to TRIAGE_PROMPT's much shorter job text / candidate summary —
+    keyword overlap stands in for the cheap LLM triage pass's relevance
+    judgment so triage_mode="llm" is exercisable and deterministic under
+    USE_MOCK_LLM=true."""
+    job_text = ""
+    if "Job Description:\n---\n" in prompt:
+        job_text = prompt.split("Job Description:\n---\n", 1)[1].split("\n---\n", 1)[0]
+    candidate_summary = ""
+    if "Candidate summary:\n---\n" in prompt:
+        candidate_summary = prompt.split("Candidate summary:\n---\n", 1)[1].split("\n---\n", 1)[0]
+
+    job_lower = job_text.lower()
+    summary_lower = candidate_summary.lower()
+    job_skills = {kw for kw in _SKILL_VOCAB if re.search(rf"\b{re.escape(kw)}\b", job_lower)}
+    summary_skills = {kw for kw in _SKILL_VOCAB if re.search(rf"\b{re.escape(kw)}\b", summary_lower)}
+    overlap = job_skills & summary_skills
+
+    relevance = (len(overlap) / len(job_skills) * 70 + 25) if job_skills else 50.0
+    return {"relevance": round(min(98.0, max(2.0, relevance)), 1)}
+
+
 def _mock_score_match(prompt: str) -> dict:
     """Regex-based scoring that actually reads the job text and candidate
     profile embedded in SCORING_PROMPT (see matching/prompts.py), instead of
@@ -273,6 +296,8 @@ class MockLLMClient(LLMClient):
                         "judge_notes": "Mock judge: initial score looks consistent with the stated evidence.",
                     }
                 )
+            if "triaging a candidate" in prompt:
+                return json.dumps(_mock_triage(prompt))
             return json.dumps(_mock_score_match(prompt))
         return "Mock candidate with relevant experience for the given role."
 
